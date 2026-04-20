@@ -1,0 +1,92 @@
+[
+  {
+    "fund_code": "URTH",
+    "fund_name": "iShares MSCI World ETF",
+    "asset_class": "Equity-Global",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "AOA",
+    "fund_name": "iShares Core Aggressive Allocation ETF",
+    "asset_class": "Multi-Asset",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "XLV",
+    "fund_name": "Health Care Select Sector SPDR Fund",
+    "asset_class": "Equity-Regional",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "SPY",
+    "fund_name": "SPDR S&P 500 ETF Trust",
+    "asset_class": "Equity-Global",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "VNQ",
+    "fund_name": "Vanguard Real Estate ETF",
+    "asset_class": "REIT",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "QQQ",
+    "fund_name": "Invesco QQQ Trust",
+    "asset_class": "Equity-Regional",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "EMB",
+    "fund_name": "iShares J.P. Morgan USD Emerging Markets Bond ETF",
+    "asset_class": "Fixed-Income",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "BNDX",
+    "fund_name": "Vanguard Total International Bond ETF",
+    "asset_class": "Fixed-Income",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "AAXJ",
+    "fund_name": "iShares MSCI All Country Asia ex Japan ETF",
+    "asset_class": "Equity-Regional",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  },
+  {
+    "fund_code": "VT",
+    "fund_name": "Vanguard Total World Stock ETF",
+    "asset_class": "Equity-Global",
+    "currency": "USD",
+    "nav_history_years": 12,
+    "data_start_date": "2013-06-01",
+    "data_end_date": "2026-04-01"
+  }
+]

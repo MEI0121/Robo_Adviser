@@ -1,0 +1,233 @@
+"""
+Pydantic request/response models for the Robo-Adviser FastAPI backend.
+All schemas adhere strictly to the API contract defined in PRD Section 2.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Literal, Optional
+
+import numpy as np
+from pydantic import BaseModel, Field, model_validator
+
+
+# ---------------------------------------------------------------------------
+# Shared sub-models
+# ---------------------------------------------------------------------------
+
+
+class PortfolioStats(BaseModel):
+    """Statistics for a single portfolio point (optimal or GMVP)."""
+
+    weights: list[float] = Field(
+        ...,
+        min_length=10,
+        max_length=10,
+        description="Asset allocation weights. Sum = 1.0.",
+    )
+    expected_annual_return: float = Field(
+        ..., description="E(r_p) = w^T * mu. Annualized, decimal form."
+    )
+    annual_volatility: float = Field(
+        ..., description="sigma_p = sqrt(w^T * Sigma * w). Annualized, decimal form."
+    )
+    sharpe_ratio: float = Field(
+        ..., description="(E(r_p) - r_f) / sigma_p. r_f = 0.03."
+    )
+
+
+class OptimalPortfolioStats(PortfolioStats):
+    """Extended stats for the investor-specific optimal portfolio."""
+
+    fund_codes: list[str] = Field(
+        ...,
+        min_length=10,
+        max_length=10,
+        description="FSMOne fund codes in the same order as weights.",
+    )
+    utility_score: float = Field(
+        ...,
+        description="U = E(r_p) - 0.5 * A * sigma_p^2. Maximized value.",
+    )
+
+
+class FrontierPoint(BaseModel):
+    """A single point on the efficient frontier."""
+
+    expected_return: float
+    volatility: float
+    sharpe_ratio: float
+    weights: list[float] = Field(..., min_length=10, max_length=10)
+
+
+class OptimizationMetadata(BaseModel):
+    """Metadata attached to every optimization response."""
+
+    risk_aversion_coefficient: float
+    risk_free_rate: float = 0.03
+    num_assets: int = 10
+    data_start_date: str
+    data_end_date: str
+    optimization_method: str = "SLSQP"
+    computation_time_ms: int
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/optimize
+# ---------------------------------------------------------------------------
+
+
+class OptimizeConstraints(BaseModel):
+    """Optional solver constraints forwarded from the frontend."""
+
+    allow_short_selling: bool = Field(
+        default=False,
+        description="If False, enforces w_i >= 0 for all assets.",
+    )
+    max_single_weight: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=1.0,
+        description="Upper bound on any single asset weight.",
+    )
+
+
+class OptimizeRequest(BaseModel):
+    """Request body for POST /api/v1/optimize."""
+
+    risk_aversion_coefficient: float = Field(
+        ...,
+        ge=0.5,
+        le=10.0,
+        description="Investor risk aversion parameter A from LangGraph chatbot.",
+        examples=[3.5],
+    )
+    constraints: OptimizeConstraints = Field(default_factory=OptimizeConstraints)
+
+
+class OptimizeResponse(BaseModel):
+    """Success response body for POST /api/v1/optimize."""
+
+    status: Literal["success"] = "success"
+    optimal_portfolio: OptimalPortfolioStats
+    gmvp: PortfolioStats
+    efficient_frontier: list[FrontierPoint] = Field(
+        ...,
+        min_length=100,
+        max_length=100,
+        description="100 frontier points sorted by volatility ascending.",
+    )
+    metadata: OptimizationMetadata
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/funds
+# ---------------------------------------------------------------------------
+
+
+class FundInfo(BaseModel):
+    """Metadata for a single fund in the universe."""
+
+    fund_code: str
+    fund_name: str
+    asset_class: Literal[
+        "Equity-Global",
+        "Equity-Regional",
+        "Fixed-Income",
+        "Multi-Asset",
+        "Commodity",
+        "REIT",
+    ]
+    currency: str
+    annualized_return: float
+    annualized_volatility: float
+    sharpe_ratio: float
+    nav_history_years: int = Field(..., ge=10)
+
+
+class FundsResponse(BaseModel):
+    """Response body for GET /api/v1/funds."""
+
+    funds: list[FundInfo] = Field(..., min_length=10, max_length=10)
+    covariance_matrix: list[list[float]] = Field(
+        ...,
+        description="10x10 annualized covariance matrix Sigma. Row-major order.",
+    )
+
+    @model_validator(mode="after")
+    def validate_cov_shape(self) -> "FundsResponse":
+        if len(self.covariance_matrix) != 10 or any(
+            len(row) != 10 for row in self.covariance_matrix
+        ):
+            raise ValueError("covariance_matrix must be 10x10.")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/chat/assess  (proxy passthrough — schema only)
+# ---------------------------------------------------------------------------
+
+
+class ChatAssessRequest(BaseModel):
+    """Request body for POST /api/v1/chat/assess."""
+
+    session_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="UUID for this session; generated server-side if omitted.",
+    )
+    user_message: Optional[str] = Field(
+        default=None,
+        description=(
+            "Latest user reply. Omit or null on the first turn to receive the "
+            "opening question."
+        ),
+    )
+    current_state: Optional[dict] = Field(
+        default=None,
+        description="Opaque LangGraph state snapshot from the prior response.",
+    )
+
+
+class RiskProfile(BaseModel):
+    """Terminal risk profile. Only present when is_terminal = True."""
+
+    risk_aversion_coefficient: float = Field(..., ge=0.5, le=10.0)
+    profile_label: Literal[
+        "Conservative",
+        "Moderately Conservative",
+        "Moderate",
+        "Moderately Aggressive",
+        "Aggressive",
+    ]
+    dimension_scores: dict[str, int]
+
+
+class ChatAssessResponse(BaseModel):
+    """Response body for POST /api/v1/chat/assess."""
+
+    session_id: str
+    assistant_message: str
+    updated_state: dict
+    is_terminal: bool = Field(
+        ...,
+        description="True when the graph has reached the terminal RiskProfileState node.",
+    )
+    risk_profile: Optional[RiskProfile] = Field(
+        default=None,
+        description="Only present when is_terminal = True.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Error schema (all endpoints)
+# ---------------------------------------------------------------------------
+
+
+class ErrorResponse(BaseModel):
+    """Standard error envelope returned on 400 / 422 / 500."""
+
+    status: Literal["error"] = "error"
+    error_code: str
+    message: str
+    details: dict = Field(default_factory=dict)

@@ -1,0 +1,14 @@
+%% LangGraph risk-assessment state machine — Robo-Adviser Platform (PRD risk module)
+%% Use: paste into Mermaid Live, export SVG/PNG at >=300 DPI for Word, or open in draw.io.
+
+flowchart TD
+    START([Session start / session_id]) --> N1[collect_horizon]
+    N1 --> N2[collect_drawdown_tolerance]
+    N2 --> N3[collect_loss_reaction]
+    N3 --> N4[collect_income_stability]
+    N4 --> N5[collect_experience]
+    N5 --> N6[score_and_classify]
+    N6 --> END([Terminal RiskProfileState])
+    END --> OUT[is_terminal: true]
+    OUT --> FIELDS[risk_aversion_coefficient A in 0.5 to 10.0]
+    FIELDS --> LABEL[profile_label + dimension_scores + composite_score]

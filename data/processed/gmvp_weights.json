@@ -1,0 +1,31 @@
+{
+  "fund_codes": [
+    "URTH",
+    "AOA",
+    "XLV",
+    "SPY",
+    "VNQ",
+    "QQQ",
+    "EMB",
+    "BNDX",
+    "AAXJ",
+    "VT"
+  ],
+  "weights": [
+    0.0,
+    0.0,
+    0.01907749,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.98092251,
+    0.0,
+    0.0
+  ],
+  "expected_annual_return": 0.02642857,
+  "annual_volatility": 0.04715158,
+  "sharpe_ratio": -0.07574362,
+  "method": "constrained_SLSQP",
+  "sum_weights": 1.0
+}

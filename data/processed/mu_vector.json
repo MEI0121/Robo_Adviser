@@ -1,0 +1,28 @@
+{
+  "fund_codes": [
+    "URTH",
+    "AOA",
+    "XLV",
+    "SPY",
+    "VNQ",
+    "QQQ",
+    "EMB",
+    "BNDX",
+    "AAXJ",
+    "VT"
+  ],
+  "mu_vector": [
+    0.11009664,
+    0.09088916,
+    0.10457965,
+    0.13317998,
+    0.06742593,
+    0.18030242,
+    0.03797572,
+    0.02490865,
+    0.07181711,
+    0.10586397
+  ],
+  "description": "Annualised mean log-return vector \u03bc. Factor = 12.",
+  "units": "decimal (e.g. 0.09 = 9% p.a.)"
+}
