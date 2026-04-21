@@ -386,6 +386,8 @@ async def get_funds() -> FundsResponse:
             FundInfo(
                 fund_code=meta["fund_code"],
                 fund_name=meta["fund_name"],
+                proxy_ticker=meta["proxy_ticker"],
+                proxy_provider=meta.get("proxy_provider", "Yahoo Finance"),
                 asset_class=meta["asset_class"],
                 currency=meta.get("currency", "USD"),
                 annualized_return=round(ann_ret, 6),

@@ -36,8 +36,13 @@ from optimizer import (
 )
 
 
-# Canonical fund ordering (matches data/processed/mu_vector.json)
-_FUND_ORDER = ["URTH", "AOA", "XLV", "SPY", "VNQ", "QQQ", "EMB", "BNDX", "AAXJ", "VT"]
+# Canonical proxy-ticker ordering (matches data/processed/mu_vector.json's
+# `fund_codes` array and fund_metadata.json's `proxy_ticker` sequence).
+# This is the internal data-row ordering, not the FSMOne display-layer
+# `fund_code` ordering — those are now "FSMONE_..." strings.
+_PROXY_TICKER_ORDER = [
+    "URTH", "AOA", "XLV", "SPY", "VNQ", "QQQ", "EMB", "BNDX", "AAXJ", "VT",
+]
 
 
 _DATA_PRESENT = (
@@ -93,7 +98,7 @@ class TestShortAllowedGMVPOnCurrentDataset:
 
     @pytest.mark.parametrize("ticker", ["URTH", "VNQ", "QQQ", "VT"])
     def test_expected_shorts(self, w_short, ticker):
-        idx = _FUND_ORDER.index(ticker)
+        idx = _PROXY_TICKER_ORDER.index(ticker)
         assert w_short[idx] < -0.01, (
             f"{ticker} (idx {idx}) expected to be a meaningful short "
             f"(< -1%) when short-sales are allowed; got {w_short[idx]:+.4f}"

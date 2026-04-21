@@ -177,13 +177,16 @@ export default function EfficientFrontierChart({
   };
 
   // Individual fund scatter — σ, E[r] directly from fund metadata (already annualized).
+  // Labels use `proxy_ticker` (short, readable) instead of the FSMOne
+  // `fund_code` which is too long for inline chart annotation. Hover text
+  // shows the full FSMOne fund_name.
   const xFunds = funds.map((f) => f.annualized_volatility * 100);
   const yFunds = funds.map((f) => f.annualized_return * 100);
-  const fundTickers = funds.map((f) => f.fund_code);
+  const fundLabels = funds.map((f) => f.proxy_ticker);
   const fundHoverTexts = funds.map(
     (f) =>
       `<b>${f.fund_name}</b><br>` +
-      `Ticker: ${f.fund_code}<br>` +
+      `Proxy: ${f.proxy_ticker} (${f.proxy_provider})<br>` +
       `E(rp): ${(f.annualized_return * 100).toFixed(2)}%<br>` +
       `σp: ${(f.annualized_volatility * 100).toFixed(2)}%<br>` +
       `Sharpe: ${f.sharpe_ratio.toFixed(4)}<extra></extra>`,
@@ -196,7 +199,7 @@ export default function EfficientFrontierChart({
     legendgroup: "frontiers",
     x: xFunds,
     y: yFunds,
-    text: fundTickers,
+    text: fundLabels,
     textposition: "middle right",
     textfont: { color: COLOR.fundDot, size: 10 },
     hovertemplate: fundHoverTexts,

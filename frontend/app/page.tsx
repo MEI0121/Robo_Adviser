@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 const FEATURES = [
   {
@@ -19,18 +20,39 @@ const FEATURES = [
   {
     icon: "🥧",
     title: "Allocation Dashboard",
-    desc: "Recharts pie chart and sortable fund table show your optimal allocation across 10 liquid US-listed ETFs in five asset-class sleeves (see Fund Universe below).",
+    desc: "Recharts pie chart and sortable fund table show your optimal allocation across 10 FSMOne funds in five asset-class sleeves (see Fund Universe below).",
   },
 ];
 
-/** Mirrors `data/processed/fund_metadata.json` — ticker-level ETFs used for μ, Σ. */
-const FUND_CLASSES = [
-  { label: "Equity-Global", color: "bg-blue-500", count: 3 },
-  { label: "Equity-Regional", color: "bg-violet-500", count: 3 },
-  { label: "Fixed-Income", color: "bg-emerald-500", count: 2 },
-  { label: "Multi-Asset", color: "bg-amber-500", count: 1 },
-  { label: "REIT", color: "bg-rose-500", count: 1 },
+/**
+ * Mirrors `data/processed/fund_metadata.json` — FSMOne display names plus
+ * the ETF proxy ticker each uses for μ/σ estimation. Kept hardcoded here
+ * (rather than fetched) so the landing page stays static and cheap.
+ */
+const FUND_UNIVERSE: {
+  fund_name: string;
+  proxy_ticker: string;
+  asset_class: "Equity-Global" | "Equity-Regional" | "Fixed-Income" | "Multi-Asset" | "REIT";
+}[] = [
+  { fund_name: "AB SICAV I Global Growth Portfolio AX USD",           proxy_ticker: "URTH", asset_class: "Equity-Global" },
+  { fund_name: "Blackrock Global Allocation A2 USD",                  proxy_ticker: "AOA",  asset_class: "Multi-Asset" },
+  { fund_name: "Fidelity Funds - Global Healthcare Fund A-ACC-USD",   proxy_ticker: "XLV",  asset_class: "Equity-Regional" },
+  { fund_name: "FTIF - Franklin US Opportunities A Acc USD",          proxy_ticker: "SPY",  asset_class: "Equity-Regional" },
+  { fund_name: "Janus Henderson Horizon Global Property Equities A2 USD", proxy_ticker: "VNQ", asset_class: "REIT" },
+  { fund_name: "JPMorgan Funds - America Equity A (acc) USD",         proxy_ticker: "QQQ",  asset_class: "Equity-Regional" },
+  { fund_name: "Neuberger Berman Emerging Market Debt Blend A MDis USD", proxy_ticker: "EMB", asset_class: "Fixed-Income" },
+  { fund_name: "PIMCO Global Bond Fund Cl E Acc USD",                 proxy_ticker: "BNDX", asset_class: "Fixed-Income" },
+  { fund_name: "Schroder ISF Asian Opportunities A Acc USD",          proxy_ticker: "AAXJ", asset_class: "Equity-Regional" },
+  { fund_name: "Schroder ISF Global Equity A Acc USD",                proxy_ticker: "VT",   asset_class: "Equity-Global" },
 ];
+
+const ASSET_CLASS_BADGE: Record<string, string> = {
+  "Equity-Global":   "bg-blue-500/20 text-blue-300",
+  "Equity-Regional": "bg-violet-500/20 text-violet-300",
+  "Fixed-Income":    "bg-emerald-500/20 text-emerald-300",
+  "Multi-Asset":     "bg-amber-500/20 text-amber-300",
+  REIT:              "bg-rose-500/20 text-rose-300",
+};
 
 export default function LandingPage() {
   return (
@@ -62,9 +84,10 @@ export default function LandingPage() {
           <p className="mx-auto mb-10 max-w-2xl text-lg text-slate-300 leading-relaxed">
             Complete a 5-dimension psychographic risk assessment, then receive a
             mathematically optimal portfolio tailored to your risk aversion
-            coefficient — built on 10 US-listed ETFs with over a decade of
-            aligned price history (see data pipeline) and reconciliation to 6
-            decimal places where applicable.
+            coefficient — built on 10 FSMOne funds, with expected returns and
+            risk estimated from liquid ETF proxies that have over a decade of
+            aligned price history, and reconciliation to 6 decimal places
+            where applicable.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -91,7 +114,7 @@ export default function LandingPage() {
       <section className="border-y border-slate-700/60 bg-slate-800/40 px-4 py-8">
         <div className="mx-auto max-w-5xl grid grid-cols-2 gap-8 sm:grid-cols-4">
           {[
-            { value: "10", label: "US-listed ETFs" },
+            { value: "10", label: "FSMOne funds" },
             { value: "12+ yrs", label: "Price history" },
             { value: "100", label: "Frontier Points" },
             { value: "1e-6", label: "Audit Tolerance" },
@@ -131,31 +154,45 @@ export default function LandingPage() {
           <h2 className="mb-4 text-center text-3xl font-bold text-white">
             Fund Universe
           </h2>
-          <p className="mb-4 text-center text-slate-400 max-w-3xl mx-auto leading-relaxed">
-            Ten liquid benchmark ETFs drive the covariance matrix and expected
-            returns: global and total-world equity (URTH, SPY, VT), US sector /
-            growth / Asia ex-Japan equity (XLV, QQQ, AAXJ), core bonds including
-            EM and international (EMB, BNDX), a diversified allocation fund (AOA),
-            and US REITs (VNQ). Labels follow the PRD asset-class taxonomy
-            (Equity-Global, Equity-Regional, Fixed-Income, Multi-Asset, REIT).
+          <p className="mb-8 text-center text-slate-400 max-w-3xl mx-auto leading-relaxed">
+            Ten FSMOne funds span global and regional equity, US sector growth,
+            Asia ex-Japan equity, emerging and international fixed income, a
+            diversified multi-asset allocation, and global real estate. Expected
+            returns and risk for each fund are estimated from a liquid ETF
+            proxy listed in the same asset class (see Methodology below).
+            Ordering matches the API{" "}
+            <code className="text-slate-400">fund_codes</code> array.
           </p>
-          <p className="mb-10 text-center text-sm text-slate-500">
-            Five sleeves · USD · same ordering as <code className="text-slate-400">fund_metadata.json</code> / API{" "}
-            <code className="text-slate-400">fund_codes</code>
-          </p>
-          <div className="flex flex-wrap justify-center gap-3">
-            {FUND_CLASSES.map((fc) => (
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {FUND_UNIVERSE.map((f) => (
               <div
-                key={fc.label}
-                className="flex items-center gap-2 rounded-full border border-slate-600 bg-slate-800 px-4 py-2 text-sm text-slate-200"
+                key={f.proxy_ticker}
+                className="flex items-start justify-between gap-3 rounded-xl border border-slate-700/80 bg-slate-800/50 px-4 py-3"
               >
-                <span className={`h-2.5 w-2.5 rounded-full ${fc.color}`} />
-                {fc.label}
-                <span className="ml-1 rounded-full bg-slate-700 px-1.5 py-0.5 text-xs text-slate-400">
-                  ×{fc.count}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-slate-100">
+                    {f.fund_name}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    proxy:{" "}
+                    <code className="text-slate-400">{f.proxy_ticker}</code>
+                  </p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                    ASSET_CLASS_BADGE[f.asset_class] ??
+                    "bg-slate-700 text-slate-300"
+                  }`}
+                >
+                  {f.asset_class}
                 </span>
               </div>
             ))}
+          </div>
+
+          <div className="mt-6">
+            <MethodologyNote />
           </div>
         </div>
       </section>

@@ -15,6 +15,7 @@ import { fetchFunds, runOptimization } from "@/lib/api";
 import { DEFAULT_OPTIMIZE_CONSTRAINTS } from "@/lib/optimizationDefaults";
 import { shouldRefreshOptimization } from "@/lib/optimizationRefresh";
 import type { Fund } from "@/types";
+import { MethodologyNote } from "@/components/MethodologyNote";
 
 // WCAG AA compliant 10-color palette
 const COLORS = [
@@ -43,6 +44,7 @@ interface PieEntry {
   name: string;
   shortName: string;
   fund_code: string;
+  proxy_ticker: string;
   asset_class: string;
   weight: number; // 0-1
   weightPct: number; // 0-100
@@ -208,6 +210,7 @@ export default function PortfolioPage() {
         .slice(0, 3)
         .join(" "),
       fund_code: code,
+      proxy_ticker: fund?.proxy_ticker ?? "",
       asset_class: fund?.asset_class ?? "Unknown",
       weight: w,
       weightPct: w * 100,
@@ -433,11 +436,17 @@ export default function PortfolioPage() {
                           style={{ backgroundColor: entry.color }}
                         />
                         <div>
-                          <p className="text-slate-100 font-medium leading-tight">
+                          <p
+                            className="text-slate-100 font-medium leading-tight"
+                            title={entry.name}
+                          >
                             {entry.shortName}
                           </p>
-                          <p className="text-slate-500 text-xs font-mono">
-                            {entry.fund_code}
+                          <p className="text-slate-500 text-xs">
+                            proxy:{" "}
+                            <code className="text-slate-400">
+                              {entry.proxy_ticker || "—"}
+                            </code>
                           </p>
                         </div>
                       </div>
@@ -530,6 +539,10 @@ export default function PortfolioPage() {
             </p>
           </div>
         )}
+
+        <div className="mt-6">
+          <MethodologyNote />
+        </div>
       </div>
     </div>
   );

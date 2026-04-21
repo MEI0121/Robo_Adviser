@@ -126,8 +126,14 @@ export type AssetClass =
   | "REIT";
 
 export interface Fund {
+  /** FSMOne fund identifier — the display-layer code users transact in. */
   fund_code: string;
+  /** FSMOne fund name shown to users on the landing page, portfolio table, and chart hovers. */
   fund_name: string;
+  /** ETF ticker used to estimate μ and σ for this fund (Yahoo Finance proxy). */
+  proxy_ticker: string;
+  /** Upstream price-series provider for the proxy ticker. */
+  proxy_provider: string;
   asset_class: AssetClass;
   currency: string;
   annualized_return: number;

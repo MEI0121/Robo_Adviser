@@ -200,10 +200,27 @@ class OptimizeResponse(BaseModel):
 
 
 class FundInfo(BaseModel):
-    """Metadata for a single fund in the universe."""
+    """
+    Metadata for a single fund in the universe.
+
+    ``fund_code`` and ``fund_name`` are the **display layer** — the FSMOne
+    fund identifiers that users see and transact in. Expected returns and
+    covariance, however, are estimated from a liquid ETF ``proxy_ticker``
+    priced via ``proxy_provider``, because FSMOne does not expose 10-year
+    daily historical data via API. The split is documented to users via a
+    methodology tooltip on the fund-listing pages.
+    """
 
     fund_code: str
     fund_name: str
+    proxy_ticker: str = Field(
+        ...,
+        description="ETF ticker used to estimate mu and sigma for this fund.",
+    )
+    proxy_provider: str = Field(
+        default="Yahoo Finance",
+        description="Upstream price-series provider for the proxy ticker.",
+    )
     asset_class: Literal[
         "Equity-Global",
         "Equity-Regional",

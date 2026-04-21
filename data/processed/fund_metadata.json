@@ -1,7 +1,9 @@
 [
   {
-    "fund_code": "URTH",
-    "fund_name": "iShares MSCI World ETF",
+    "fund_code": "FSMONE_AB_GLOBAL_GROWTH",
+    "fund_name": "AB SICAV I Global Growth Portfolio AX USD",
+    "proxy_ticker": "URTH",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Global",
     "currency": "USD",
     "nav_history_years": 12,
@@ -9,8 +11,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "AOA",
-    "fund_name": "iShares Core Aggressive Allocation ETF",
+    "fund_code": "FSMONE_BLACKROCK_GLOBAL_ALLOC",
+    "fund_name": "Blackrock Global Allocation A2 USD",
+    "proxy_ticker": "AOA",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Multi-Asset",
     "currency": "USD",
     "nav_history_years": 12,
@@ -18,8 +22,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "XLV",
-    "fund_name": "Health Care Select Sector SPDR Fund",
+    "fund_code": "FSMONE_FIDELITY_HEALTH",
+    "fund_name": "Fidelity Funds - Global Healthcare Fund A-ACC-USD",
+    "proxy_ticker": "XLV",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
     "currency": "USD",
     "nav_history_years": 12,
@@ -27,17 +33,21 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "SPY",
-    "fund_name": "SPDR S&P 500 ETF Trust",
-    "asset_class": "Equity-Global",
+    "fund_code": "FSMONE_FRANKLIN_US_OPP",
+    "fund_name": "FTIF - Franklin US Opportunities A Acc USD",
+    "proxy_ticker": "SPY",
+    "proxy_provider": "Yahoo Finance",
+    "asset_class": "Equity-Regional",
     "currency": "USD",
     "nav_history_years": 12,
     "data_start_date": "2013-06-01",
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "VNQ",
-    "fund_name": "Vanguard Real Estate ETF",
+    "fund_code": "FSMONE_JANUS_REIT",
+    "fund_name": "Janus Henderson Horizon Global Property Equities A2 USD",
+    "proxy_ticker": "VNQ",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "REIT",
     "currency": "USD",
     "nav_history_years": 12,
@@ -45,8 +55,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "QQQ",
-    "fund_name": "Invesco QQQ Trust",
+    "fund_code": "FSMONE_JPMORGAN_AMER_EQ",
+    "fund_name": "JPMorgan Funds - America Equity A (acc) USD",
+    "proxy_ticker": "QQQ",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
     "currency": "USD",
     "nav_history_years": 12,
@@ -54,8 +66,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "EMB",
-    "fund_name": "iShares J.P. Morgan USD Emerging Markets Bond ETF",
+    "fund_code": "FSMONE_NBG_EM_DEBT",
+    "fund_name": "Neuberger Berman Emerging Market Debt Blend A MDis USD",
+    "proxy_ticker": "EMB",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Fixed-Income",
     "currency": "USD",
     "nav_history_years": 12,
@@ -63,8 +77,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "BNDX",
-    "fund_name": "Vanguard Total International Bond ETF",
+    "fund_code": "FSMONE_PIMCO_GLOBAL_BOND",
+    "fund_name": "PIMCO Global Bond Fund Cl E Acc USD",
+    "proxy_ticker": "BNDX",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Fixed-Income",
     "currency": "USD",
     "nav_history_years": 12,
@@ -72,8 +88,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "AAXJ",
-    "fund_name": "iShares MSCI All Country Asia ex Japan ETF",
+    "fund_code": "FSMONE_SCHRODER_ASIA_OPP",
+    "fund_name": "Schroder ISF Asian Opportunities A Acc USD",
+    "proxy_ticker": "AAXJ",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
     "currency": "USD",
     "nav_history_years": 12,
@@ -81,8 +99,10 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "VT",
-    "fund_name": "Vanguard Total World Stock ETF",
+    "fund_code": "FSMONE_SCHRODER_GLOBAL_EQ",
+    "fund_name": "Schroder ISF Global Equity A Acc USD",
+    "proxy_ticker": "VT",
+    "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Global",
     "currency": "USD",
     "nav_history_years": 12,
