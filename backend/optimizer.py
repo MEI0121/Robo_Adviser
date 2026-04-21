@@ -1,14 +1,17 @@
 """
 Portfolio optimization module.
 
-Implements three algorithms that mirror the Excel audit model:
+Implements the algorithms that mirror the Excel audit model:
 
 1. compute_gmvp()           — Closed-form Global Minimum Variance Portfolio
                                (mirrors Excel MMULT / MINVERSE formula)
 2. minimize_variance_for_target() — Minimum variance at a target return level
                                     (SLSQP inner loop for frontier sweep)
 3. compute_efficient_frontier()   — 100-point parametric frontier sweep
-4. compute_optimal_portfolio()    — Utility-maximizing portfolio via SLSQP
+4. compute_optimal_portfolio()    — Utility-maximising portfolio via SLSQP
+4b. compute_tangency_portfolio()  — Max-Sharpe portfolio (scaled min-var
+                                     with direct Sharpe-max fallback)
+5. compute_equal_weight_portfolio() — 1/n benchmark statistics
 
 Reconciliation target: all results must agree with Excel to within 1e-6.
 
@@ -79,6 +82,7 @@ class PortfolioResult:
     volatility: float
     sharpe: float
     utility_score: float = 0.0   # filled in for the optimal portfolio only
+    solver_path: str = ""        # e.g. "primary" or "fallback" for tangency
 
 
 @dataclass
@@ -431,6 +435,175 @@ def compute_optimal_portfolio(
         sharpe=sharpe_ratio(w_star, mu, cov, rf),
         utility_score=utility(w_star, mu, cov, A),
     )
+
+
+# ---------------------------------------------------------------------------
+# 4b. Tangency (max-Sharpe) portfolio
+# ---------------------------------------------------------------------------
+
+
+def _bounds_respected(w: np.ndarray, bounds: list[tuple[float, float]], tol: float = 1e-8) -> bool:
+    """Verify every weight lies within its (lo, hi) bound, up to tolerance."""
+    return all(lo - tol <= wi <= hi + tol for wi, (lo, hi) in zip(w, bounds))
+
+
+def compute_tangency_portfolio(
+    mu: np.ndarray,
+    cov: np.ndarray,
+    rf: float = RISK_FREE_RATE,
+    max_weight: float = 1.0,
+    allow_short_selling: bool = False,
+) -> PortfolioResult:
+    """
+    Max-Sharpe (tangency) portfolio under the specified bounds regime.
+
+    Stability
+    ---------
+    Direct maximisation of S(w) = (μᵀw − rf) / √(wᵀΣw) is numerically
+    unstable: the objective is unbounded as wᵀΣw → 0 and SLSQP can
+    chase the degeneracy, especially with allow_short_selling=True.
+
+    Primary path — scaled min-variance (classical stable trick):
+        min  wᵀΣw
+        s.t. (μ − rf·1)ᵀw = 1
+             per-asset bounds from regime
+    (the sum-to-one constraint is intentionally dropped here — Sharpe
+    is scale-invariant, so fixing the excess return to 1 picks a scale
+    that is normalised away in step 2)
+
+        2. Renormalise: w_tan = w / sum(w).
+        3. Validate post-normalisation weights against the original
+           bounds.
+
+    Fallback path — direct Sharpe-max SLSQP:
+        max  (μᵀw − rf) / √(wᵀΣw)     (actually min of −Sharpe)
+        s.t. sum(w) = 1
+             per-asset bounds from regime
+
+        Warm-started from the primary's output when valid, else from
+        equal weights (long-only) or the long-only tangency
+        (short-allowed).
+
+    Why run both
+    ------------
+    The scaled min-variance formulation is exactly correct only when
+    bounds scale with w (e.g. w_i ≥ 0, no upper cap). When bounds are
+    [0, max_weight<1] or [-1, 2] they don't scale, so the
+    renormalised primary solution can respect the bounds yet land on a
+    non-tangent point. We therefore always run both paths and return
+    whichever has the higher Sharpe ratio. ``solver_path`` records
+    which path won (primary / fallback).
+
+    Parameters
+    ----------
+    mu                  : (n,) float64 — annualised expected returns
+    cov                 : (n, n) float64 — annualised covariance
+    rf                  : float — risk-free rate
+    max_weight          : float — per-asset cap (long-only regime only)
+    allow_short_selling : bool — if True, bounds become [-1, 2]
+
+    Returns
+    -------
+    PortfolioResult with ``solver_path ∈ {"primary", "fallback"}``.
+
+    Raises
+    ------
+    OptimizationError  if both paths fail.
+    """
+    n = len(mu)
+    excess = np.asarray(mu, dtype=np.float64) - float(rf)
+    bounds = _bounds_for_regime(n, max_weight, allow_short_selling)
+
+    def _finalise(w_unit: np.ndarray, path: str) -> PortfolioResult:
+        return PortfolioResult(
+            weights=w_unit,
+            expected_return=portfolio_return(w_unit, mu),
+            volatility=portfolio_volatility(w_unit, cov),
+            sharpe=sharpe_ratio(w_unit, mu, cov, rf),
+            solver_path=path,
+        )
+
+    # -----------------------------------------------------------------
+    # Primary: min wᵀΣw  s.t.  (μ-rf·1)ᵀw = 1, bounds
+    # -----------------------------------------------------------------
+    # x0 initialisation: scale equal-weight up so the linear constraint
+    # is closer to satisfied. ((μ-rf)ᵀ(1/n · 1) · k = 1) ⇒ k = 1/((μ-rf).mean())
+    mean_excess = float(excess.mean())
+    if abs(mean_excess) > 1e-12:
+        x0_primary = np.ones(n, dtype=np.float64) * (1.0 / mean_excess / n)
+    else:
+        x0_primary = np.ones(n, dtype=np.float64) / n
+
+    primary_constraints = [{"type": "eq", "fun": lambda w, e=excess: float(e @ w - 1.0)}]
+
+    primary_candidate: PortfolioResult | None = None
+    try:
+        primary = minimize(
+            fun=lambda w, c=cov: float(w @ c @ w),
+            x0=x0_primary,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=primary_constraints,
+            options={"ftol": 1e-12, "maxiter": 2000},
+        )
+    except Exception:  # noqa: BLE001 — any SLSQP internal error falls through
+        primary = None
+
+    if primary is not None and primary.success:
+        w_raw = primary.x.astype(np.float64)
+        s = float(w_raw.sum())
+        if s > 1e-9:
+            w_tan = w_raw / s
+            if _bounds_respected(w_tan, bounds):
+                primary_candidate = _finalise(w_tan, "primary")
+
+    # -----------------------------------------------------------------
+    # Fallback: direct Sharpe-max SLSQP (always run — see docstring)
+    # -----------------------------------------------------------------
+    if primary_candidate is not None:
+        x0_fallback = primary_candidate.weights.copy()
+    elif allow_short_selling:
+        # Warm-start from long-only tangency when available
+        try:
+            long_only_tan = compute_tangency_portfolio(
+                mu, cov, rf=rf, max_weight=1.0, allow_short_selling=False
+            )
+            x0_fallback = long_only_tan.weights.copy()
+        except OptimizationError:
+            x0_fallback = np.ones(n, dtype=np.float64) / n
+    else:
+        x0_fallback = np.ones(n, dtype=np.float64) / n
+
+    def _neg_sharpe(w: np.ndarray, e: np.ndarray = excess, c: np.ndarray = cov) -> float:
+        variance = float(w @ c @ w)
+        if variance <= 1e-16:
+            return 0.0  # degenerate; let SLSQP move on
+        return -float(e @ w) / float(np.sqrt(variance))
+
+    fallback_constraints = [{"type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)}]
+    fallback = minimize(
+        fun=_neg_sharpe,
+        x0=x0_fallback,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=fallback_constraints,
+        options={"ftol": 1e-9, "maxiter": 2000},
+    )
+
+    fallback_candidate: PortfolioResult | None = None
+    if fallback.success:
+        fallback_candidate = _finalise(fallback.x.astype(np.float64), "fallback")
+
+    # -----------------------------------------------------------------
+    # Return the higher-Sharpe of the two. If both failed, raise.
+    # -----------------------------------------------------------------
+    candidates = [c for c in (primary_candidate, fallback_candidate) if c is not None]
+    if not candidates:
+        raise OptimizationError(
+            "Tangency optimisation failed in both primary and fallback paths. "
+            f"Fallback message: {fallback.message}"
+        )
+    return max(candidates, key=lambda c: c.sharpe)
 
 
 # ---------------------------------------------------------------------------
