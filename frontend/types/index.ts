@@ -92,11 +92,26 @@ export interface OptimizationMetadata {
   computation_time_ms: number;
 }
 
+export interface TangencyStats extends PortfolioStats {
+  /** "primary" | "fallback" from compute_tangency_portfolio; null for non-tangency portfolios. */
+  solver_path?: string | null;
+}
+
 export interface OptimizationResponse {
   status: "success" | "error";
   optimal_portfolio: PortfolioStats;
   gmvp: PortfolioStats;
   efficient_frontier: FrontierPoint[];
+  /** GMVP computed with w ∈ [-1, 2] (PRD Part 1 relaxed constraints). */
+  gmvp_short_allowed: PortfolioStats;
+  /** Max-Sharpe portfolio under the request's max_weight, long-only. Anchor for CML. */
+  tangency: TangencyStats;
+  /** Max-Sharpe portfolio with w ∈ [-1, 2]. */
+  tangency_short_allowed: TangencyStats;
+  /** Parallel 100-point frontier with w ∈ [-1, 2]. */
+  efficient_frontier_short_allowed: FrontierPoint[];
+  /** Naive 1/n benchmark. Computed server-side; replaces the old frontend averaging hack. */
+  equal_weight: PortfolioStats;
   metadata: OptimizationMetadata;
 }
 
