@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import type { FrontierPoint, PortfolioStats, Fund } from "@/types";
+import { RISK_FREE_RATE } from "@/lib/constants";
 
 // Plotly must be loaded client-side only (no SSR)
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
@@ -11,7 +12,7 @@ interface Props {
   gmvp: PortfolioStats;
   optimal: PortfolioStats;
   funds: Fund[];
-  riskFreeRate?: number; // default 0.03
+  riskFreeRate?: number; // defaults to RISK_FREE_RATE from shared constants
   /** Bump on each new /optimize response — react-plotly often skips prop updates without this. */
   chartRevision?: number;
 }
@@ -37,7 +38,7 @@ export default function EfficientFrontierChart({
   gmvp,
   optimal,
   funds,
-  riskFreeRate = 0.03,
+  riskFreeRate = RISK_FREE_RATE,
   chartRevision = 0,
 }: Props) {
   // x-axis: σp × 100 (convert to %), y-axis: E(rp) × 100

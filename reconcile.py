@@ -81,7 +81,9 @@ TOL_RETURN = 1e-6
 TOL_VOL = 1e-6
 TOL_SHARPE = 1e-4
 TOL_FRONTIER = 1e-5
-RISK_FREE_RATE = 0.03
+
+# Single source of truth. backend/ is already on sys.path (see above).
+from config import RISK_FREE_RATE  # noqa: E402
 
 # PRD canonical A test values for Phase 2
 RECONCILIATION_A_VALUES: list[float] = [0.5, 2.0, 3.5, 6.0, 10.0]

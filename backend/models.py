@@ -11,6 +11,8 @@ from typing import Literal, Optional
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from config import RISK_FREE_RATE
+
 
 # ---------------------------------------------------------------------------
 # Shared sub-models
@@ -65,7 +67,7 @@ class OptimizationMetadata(BaseModel):
     """Metadata attached to every optimization response."""
 
     risk_aversion_coefficient: float
-    risk_free_rate: float = 0.03
+    risk_free_rate: float = RISK_FREE_RATE
     num_assets: int = 10
     data_start_date: str
     data_end_date: str

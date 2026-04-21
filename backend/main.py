@@ -31,6 +31,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from config import RISK_FREE_RATE
 from data_loader import (
     DataLoadError,
     MatrixConditionError,
@@ -266,7 +267,7 @@ async def optimize(body: OptimizeRequest) -> OptimizeResponse:
         ],
         metadata=OptimizationMetadata(
             risk_aversion_coefficient=A,
-            risk_free_rate=0.03,
+            risk_free_rate=RISK_FREE_RATE,
             num_assets=10,
             data_start_date=start_date,
             data_end_date=end_date,
@@ -304,7 +305,7 @@ async def get_funds() -> FundsResponse:
         w_single[i] = 1.0
         ann_ret = float(mu[i])
         ann_vol = float(np.sqrt(cov[i, i]))
-        sr = float((ann_ret - 0.03) / ann_vol) if ann_vol > 1e-12 else 0.0
+        sr = float((ann_ret - RISK_FREE_RATE) / ann_vol) if ann_vol > 1e-12 else 0.0
 
         funds.append(
             FundInfo(

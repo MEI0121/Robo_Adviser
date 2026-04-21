@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
+from config import RISK_FREE_RATE
 from portfolio_math import (
     portfolio_return,
     portfolio_variance,
@@ -224,7 +225,7 @@ def compute_efficient_frontier(
     mu: np.ndarray,
     cov: np.ndarray,
     n_points: int = 100,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
     max_weight: float = 1.0,
 ) -> list[FrontierPoint]:
     """
@@ -305,7 +306,7 @@ def compute_optimal_portfolio(
     cov: np.ndarray,
     A: float,
     max_weight: float = 1.0,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
 ) -> PortfolioResult:
     """
     Find the portfolio that maximises the mean-variance utility function:
@@ -384,7 +385,7 @@ def compute_optimal_portfolio(
 def compute_equal_weight_portfolio(
     mu: np.ndarray,
     cov: np.ndarray,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
 ) -> PortfolioResult:
     """
     Compute statistics for the naive equal-weight (1/n) portfolio.
