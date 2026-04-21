@@ -220,11 +220,20 @@ def _compute_python_frontier(
     mu: np.ndarray,
     cov: np.ndarray,
     n_points: int = 50,
+    allow_short_selling: bool = False,
 ) -> list[np.ndarray]:
-    """Return a list of weight vectors for n_points frontier portfolios."""
+    """
+    Return a list of weight vectors for n_points frontier portfolios.
+
+    ``allow_short_selling`` is forwarded to the optimizer; default False
+    preserves existing Phase 3 reconciliation behaviour (long-only frontier
+    vs excel_frontier.csv).
+    """
     from optimizer import compute_efficient_frontier  # noqa: PLC0415
 
-    pts = compute_efficient_frontier(mu, cov, n_points=n_points)
+    pts = compute_efficient_frontier(
+        mu, cov, n_points=n_points, allow_short_selling=allow_short_selling
+    )
     return [p.weights for p in pts]
 
 

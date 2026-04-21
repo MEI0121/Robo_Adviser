@@ -11,6 +11,12 @@ Implements three algorithms that mirror the Excel audit model:
 4. compute_optimal_portfolio()    — Utility-maximizing portfolio via SLSQP
 
 Reconciliation target: all results must agree with Excel to within 1e-6.
+
+Short-sale regime: every SLSQP-based optimiser accepts an
+``allow_short_selling`` flag. When False (default), bounds are
+[0, max_weight] (long-only). When True, bounds are fixed to [-1, 2] per
+PRD Part 1; truly unconstrained was ruled out because the closed-form
+tangency on this dataset is numerically degenerate (see docs §4).
 """
 
 from __future__ import annotations
@@ -28,6 +34,26 @@ from portfolio_math import (
     sharpe_ratio,
     utility,
 )
+
+
+# ---------------------------------------------------------------------------
+# Short-sale bounds (PRD Part 1)
+# ---------------------------------------------------------------------------
+
+# When allow_short_selling=True, each weight is bounded by this interval.
+# The dataset-specific rationale (unconstrained tangency is degenerate here)
+# is recorded in docs/academic_report_robo_adviser.md §4.
+SHORT_SALE_LOWER_BOUND: float = -1.0
+SHORT_SALE_UPPER_BOUND: float = 2.0
+
+
+def _bounds_for_regime(
+    n: int, max_weight: float, allow_short_selling: bool
+) -> list[tuple[float, float]]:
+    """Per-asset bounds passed to SLSQP, switched by regime."""
+    if allow_short_selling:
+        return [(SHORT_SALE_LOWER_BOUND, SHORT_SALE_UPPER_BOUND)] * n
+    return [(0.0, max_weight)] * n
 
 
 # ---------------------------------------------------------------------------
@@ -124,18 +150,29 @@ def compute_gmvp(cov: np.ndarray) -> np.ndarray:
     return w_gmvp.astype(np.float64)
 
 
-def _compute_constrained_gmvp(cov: np.ndarray) -> np.ndarray:
+def _compute_constrained_gmvp(
+    cov: np.ndarray,
+    allow_short_selling: bool = False,
+) -> np.ndarray:
     """
-    Compute GMVP subject to long-only constraints using SLSQP.
+    Compute GMVP subject to per-asset bounds via SLSQP.
 
-    Used as a fallback when the unconstrained closed-form GMVP produces
-    negative weights (which occurs when short-selling would reduce risk).
+    Used in two roles:
+      - As a fallback from compute_gmvp() when the closed-form produces
+        negative weights (long-only regime, bounds [0, 1]).
+      - As the direct GMVP solver when short-sales are allowed under the
+        PRD Part 1 bounds [-1, 2].
+
+    Parameters
+    ----------
+    cov                 : (n, n) float64 annualized covariance matrix
+    allow_short_selling : bool — if True, bounds = [-1, 2] instead of [0, 1]
     """
     n = cov.shape[0]
     x0 = np.ones(n, dtype=np.float64) / n
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, 1.0)] * n
+    bounds = _bounds_for_regime(n, max_weight=1.0, allow_short_selling=allow_short_selling)
 
     result: OptimizeResult = minimize(
         fun=lambda w: portfolio_variance(w, cov),
@@ -164,19 +201,22 @@ def minimize_variance_for_target(
     cov: np.ndarray,
     target_return: float,
     max_weight: float = 1.0,
+    allow_short_selling: bool = False,
 ) -> np.ndarray:
     """
     Find the portfolio with minimum variance subject to:
       - sum(w) = 1
-      - w_i >= 0   (long-only)
       - w^T μ = target_return
+      - per-asset bounds from _bounds_for_regime(...)
+        (long-only [0, max_weight] or short-allowed [-1, 2])
 
     Parameters
     ----------
-    mu            : (n,) float64
-    cov           : (n, n) float64
-    target_return : float — desired portfolio expected return
-    max_weight    : float — per-asset upper bound (default 1.0 = unconstrained)
+    mu                  : (n,) float64
+    cov                 : (n, n) float64
+    target_return       : float — desired portfolio expected return
+    max_weight          : float — per-asset upper bound (long-only regime only)
+    allow_short_selling : bool — if True, bounds = [-1, 2]
 
     Returns
     -------
@@ -193,7 +233,7 @@ def minimize_variance_for_target(
         {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
         {"type": "eq", "fun": lambda w: portfolio_return(w, mu) - target_return},
     ]
-    bounds = [(0.0, max_weight)] * n
+    bounds = _bounds_for_regime(n, max_weight, allow_short_selling)
 
     result: OptimizeResult = minimize(
         fun=lambda w: portfolio_variance(w, cov),
@@ -227,10 +267,11 @@ def compute_efficient_frontier(
     n_points: int = 100,
     rf: float = RISK_FREE_RATE,
     max_weight: float = 1.0,
+    allow_short_selling: bool = False,
 ) -> list[FrontierPoint]:
     """
     Trace the efficient frontier by sweeping target returns from the GMVP
-    expected return up to the maximum individual asset return.
+    expected return up to the feasible-set maximum.
 
     Returns exactly n_points FrontierPoint objects sorted by volatility
     ascending (i.e. the frontier is traced from bottom-left to top-right
@@ -238,28 +279,41 @@ def compute_efficient_frontier(
 
     Parameters
     ----------
-    mu       : (n,) float64
-    cov      : (n, n) float64
-    n_points : int — default 100 per PRD
-    rf       : float — risk-free rate for Sharpe computation
-    max_weight : float — per-asset cap forwarded to inner optimiser
+    mu                  : (n,) float64
+    cov                 : (n, n) float64
+    n_points            : int — default 100 per PRD
+    rf                  : float — risk-free rate for Sharpe computation
+    max_weight          : float — per-asset cap (long-only regime only)
+    allow_short_selling : bool — if True, inner bounds are [-1, 2] and the
+                                  target-return sweep is extended to the
+                                  analytical upper bound for that regime
 
     Returns
     -------
     list[FrontierPoint] of length n_points, sorted by volatility ascending
     """
-    # Establish the feasible return range
-    w_gmvp = compute_gmvp(cov)
-    mu_min = portfolio_return(w_gmvp, mu)   # GMVP return = frontier minimum
-    mu_max = float(mu.max())                # single-asset maximum
+    # Establish the feasible return range for this regime
+    if allow_short_selling:
+        # GMVP under [-1, 2] gives the lower return endpoint.
+        w_gmvp = _compute_constrained_gmvp(cov, allow_short_selling=True)
+        # Upper endpoint under bounds w_i ∈ [-1, 2] with sum(w) = 1:
+        # put +2 on the highest-mu asset, -1 on the lowest-mu asset,
+        # 0 elsewhere (sum = 1, feasible, analytical argmax of mu^T w).
+        mu_max = 2.0 * float(mu.max()) - 1.0 * float(mu.min())
+    else:
+        w_gmvp = compute_gmvp(cov)
+        mu_max = float(mu.max())                   # single-asset maximum
 
-    # Expand the range slightly to avoid numerical issues at boundaries
+    mu_min = portfolio_return(w_gmvp, mu)          # GMVP return = frontier minimum
+
     target_returns = np.linspace(mu_min, mu_max, n_points)
 
     frontier: list[FrontierPoint] = []
     for target in target_returns:
         try:
-            w = minimize_variance_for_target(mu, cov, target, max_weight)
+            w = minimize_variance_for_target(
+                mu, cov, target, max_weight, allow_short_selling
+            )
         except OptimizationError:
             # Skip infeasible points (can occur at the far right of the frontier)
             continue
@@ -307,6 +361,7 @@ def compute_optimal_portfolio(
     A: float,
     max_weight: float = 1.0,
     rf: float = RISK_FREE_RATE,
+    allow_short_selling: bool = False,
 ) -> PortfolioResult:
     """
     Find the portfolio that maximises the mean-variance utility function:
@@ -314,19 +369,20 @@ def compute_optimal_portfolio(
         U(w) = E(r_p) − ½ · A · σ_p²
 
     subject to:
-        Σ w_i = 1          (full investment)
-        w_i ≥ 0            (long-only)
-        w_i ≤ max_weight   (optional concentration cap)
+        Σ w_i = 1                             (full investment)
+        long-only:  0 ≤ w_i ≤ max_weight     (default)
+        short-allowed:  −1 ≤ w_i ≤ 2          (when allow_short_selling=True)
 
     SLSQP solver with ftol=1e-9 to exceed the 1e-6 reconciliation threshold.
 
     Parameters
     ----------
-    mu         : (n,) float64
-    cov        : (n, n) float64
-    A          : float — risk aversion coefficient ∈ [0.5, 10.0]
-    max_weight : float — per-asset upper bound (1.0 = no cap)
-    rf         : float — risk-free rate for Sharpe computation
+    mu                  : (n,) float64
+    cov                 : (n, n) float64
+    A                   : float — risk aversion coefficient ∈ [0.5, 10.0]
+    max_weight          : float — per-asset upper bound (long-only regime only)
+    rf                  : float — risk-free rate for Sharpe computation
+    allow_short_selling : bool — if True, bounds switch to [-1, 2]
 
     Returns
     -------
@@ -346,7 +402,7 @@ def compute_optimal_portfolio(
     x0 = np.ones(n, dtype=np.float64) / n  # equal-weight initialisation
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, max_weight)] * n
+    bounds = _bounds_for_regime(n, max_weight, allow_short_selling)
 
     def negative_utility(w: np.ndarray) -> float:
         """Objective to minimise = −U(w)."""
