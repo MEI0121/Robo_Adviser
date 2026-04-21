@@ -1,37 +1,53 @@
 # Robo-Adviser Reconciliation Report
 
 **Overall Status:** ✅ PASS  
-**Timestamp:** 2026-04-20T21:53:36.463837Z  
-**Git Commit SHA (Backend):** `N/A`  
+**Timestamp:** 2026-04-21T17:04:26.650266Z  
+**Git Commit SHA (Backend):** `5640a71`  
 **Excel Model Version:** N/A (no Excel CSVs found)  
-**Elapsed Time:** 0.053s  
+**Elapsed Time:** 0.083s  
 
-**18 / 18 checks passed.**
+**18 passed**, **14 skipped** (no Excel reference) out of 32 total.
+
+> **SKIP semantics:** a check reports SKIP when no Excel reference CSV is found under `data/reconciliation/`. Earlier versions of this report silently dropped skipped rows, which made the pass count look stronger than it was. Each SKIP row below identifies a reconciliation gap that the Excel audit model will eventually close.
 
 ---
 
 ## Check Results
 
-| # | Check | Status | Max Deviation | Tolerance |
-|---|-------|--------|--------------|-----------|
-| 1 | GMVP E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |
-| 2 | GMVP σ_p | ✅ PASS | `0.00e+00` | `1e-06` |
-| 3 | GMVP Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |
-| 4 | Optimal A=0.5 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |
-| 5 | Optimal A=0.5 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |
-| 6 | Optimal A=0.5 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |
-| 7 | Optimal A=2.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |
-| 8 | Optimal A=2.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |
-| 9 | Optimal A=2.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |
-| 10 | Optimal A=3.5 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |
-| 11 | Optimal A=3.5 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |
-| 12 | Optimal A=3.5 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |
-| 13 | Optimal A=6.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |
-| 14 | Optimal A=6.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |
-| 15 | Optimal A=6.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |
-| 16 | Optimal A=10.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |
-| 17 | Optimal A=10.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |
-| 18 | Optimal A=10.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |
+| # | Check | Status | Max Deviation | Tolerance | Notes |
+|---|-------|--------|--------------|-----------|-------|
+| 1 | μ vector (10 elements) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 2 | Σ matrix (100 elements) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 3 | GMVP weights (10 elements) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 4 | GMVP E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 5 | GMVP σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 6 | GMVP Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
+| 7 | Optimal weights (A=0.5) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 8 | Optimal A=0.5 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 9 | Optimal A=0.5 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 10 | Optimal A=0.5 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
+| 11 | Optimal weights (A=2.0) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 12 | Optimal A=2.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 13 | Optimal A=2.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 14 | Optimal A=2.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
+| 15 | Optimal weights (A=3.5) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 16 | Optimal A=3.5 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 17 | Optimal A=3.5 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 18 | Optimal A=3.5 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
+| 19 | Optimal weights (A=6.0) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 20 | Optimal A=6.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 21 | Optimal A=6.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 22 | Optimal A=6.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
+| 23 | Optimal weights (A=10.0) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 24 | Optimal A=10.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 25 | Optimal A=10.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
+| 26 | Optimal A=10.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
+| 27 | Frontier weights (long-only, 100 points) | ⚠ SKIP (no Excel reference) | — | `1e-05` | no Excel reference |
+| 28 | GMVP (short-allowed) weights | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
+| 29 | Tangency (long-only) weights | ⚠ SKIP (no Excel reference) | — | `1e-06` | solver: `fallback`; no Excel reference |
+| 30 | Tangency (short-allowed) weights | ⚠ SKIP (no Excel reference) | — | `1e-06` | solver: `fallback`; no Excel reference |
+| 31 | Frontier weights (short-allowed, 100 points) | ⚠ SKIP (no Excel reference) | — | `1e-05` | no Excel reference |
+| 32 | Equal-weight (E[r], σ, Sharpe) | ⚠ SKIP (no Excel reference) | — | `1e-06` | no Excel reference |
 
 ---
 

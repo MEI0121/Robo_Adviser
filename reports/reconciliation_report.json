@@ -1,13 +1,35 @@
 {
-  "timestamp": "2026-04-20T21:53:36.463837Z",
-  "git_commit_sha": "N/A",
+  "timestamp": "2026-04-21T17:04:26.650266Z",
+  "git_commit_sha": "5640a71",
   "excel_file_version": "N/A (no Excel CSVs found)",
   "overall_status": "PASS",
-  "total_checks": 18,
+  "total_checks": 32,
   "passed_checks": 18,
   "failed_checks": 0,
-  "elapsed_seconds": 0.053,
+  "skipped_checks": 14,
+  "elapsed_seconds": 0.083,
   "checks": [
+    {
+      "label": "μ vector (10 elements)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
+    {
+      "label": "Σ matrix (100 elements)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
+    {
+      "label": "GMVP weights (10 elements)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
     {
       "label": "GMVP E(r_p)",
       "status": "PASS",
@@ -28,6 +50,13 @@
       "max_deviation": 0.0,
       "tolerance": 0.0001,
       "details": ""
+    },
+    {
+      "label": "Optimal weights (A=0.5)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
     },
     {
       "label": "Optimal A=0.5 E(r_p)",
@@ -51,6 +80,13 @@
       "details": ""
     },
     {
+      "label": "Optimal weights (A=2.0)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
+    {
       "label": "Optimal A=2.0 E(r_p)",
       "status": "PASS",
       "max_deviation": 0.0,
@@ -70,6 +106,13 @@
       "max_deviation": 0.0,
       "tolerance": 0.0001,
       "details": ""
+    },
+    {
+      "label": "Optimal weights (A=3.5)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
     },
     {
       "label": "Optimal A=3.5 E(r_p)",
@@ -93,6 +136,13 @@
       "details": ""
     },
     {
+      "label": "Optimal weights (A=6.0)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
+    {
       "label": "Optimal A=6.0 E(r_p)",
       "status": "PASS",
       "max_deviation": 0.0,
@@ -114,6 +164,13 @@
       "details": ""
     },
     {
+      "label": "Optimal weights (A=10.0)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
+    {
       "label": "Optimal A=10.0 E(r_p)",
       "status": "PASS",
       "max_deviation": 0.0,
@@ -133,6 +190,50 @@
       "max_deviation": 0.0,
       "tolerance": 0.0001,
       "details": ""
+    },
+    {
+      "label": "Frontier weights (long-only, 100 points)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-05,
+      "details": "no Excel reference"
+    },
+    {
+      "label": "GMVP (short-allowed) weights",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
+    },
+    {
+      "label": "Tangency (long-only) weights",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference",
+      "solver_path": "fallback"
+    },
+    {
+      "label": "Tangency (short-allowed) weights",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference",
+      "solver_path": "fallback"
+    },
+    {
+      "label": "Frontier weights (short-allowed, 100 points)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-05,
+      "details": "no Excel reference"
+    },
+    {
+      "label": "Equal-weight (E[r], σ, Sharpe)",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference"
     }
   ],
   "gmvp_side_by_side": [

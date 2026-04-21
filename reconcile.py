@@ -49,9 +49,22 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import numpy as np
+
+# ---------------------------------------------------------------------------
+# Status type
+# ---------------------------------------------------------------------------
+# Every CheckResult now carries a three-valued status instead of a bool:
+#   "pass" — reference CSV present AND deviation ≤ tolerance (or internal
+#            Python-vs-Python self-consistency check that succeeded)
+#   "fail" — reference CSV present AND deviation > tolerance
+#   "skip" — no reference CSV found; the check cannot be evaluated against
+#            Excel. Previously silently dropped from results; now explicitly
+#            reported so "18/18 passed" can't be mistaken for "18/18 verified
+#            against Excel".
+CheckStatus = Literal["pass", "fail", "skip"]
 
 # ---------------------------------------------------------------------------
 # Path setup — reconcile.py lives at the project root
@@ -95,11 +108,35 @@ RECONCILIATION_A_VALUES: list[float] = [0.5, 2.0, 3.5, 6.0, 10.0]
 
 
 class CheckResult(NamedTuple):
+    """
+    Outcome of a single reconciliation check.
+
+    ``status`` supersedes the earlier boolean ``passed`` so that checks
+    without an Excel reference can be reported as "skip" rather than
+    misreported as "pass".
+
+    ``solver_path`` is populated only for tangency checks (values
+    "primary" | "fallback"); empty elsewhere. Informational only — does
+    not affect pass/fail/skip determination.
+    """
+
     label: str
-    passed: bool
+    status: CheckStatus
     max_deviation: float
     tolerance: float
     details: str = ""
+    solver_path: str = ""
+
+
+def _make_skip(label: str, tolerance: float, reason: str = "no Excel reference") -> CheckResult:
+    """Build a CheckResult for a check whose Excel CSV was not provided."""
+    return CheckResult(
+        label=label,
+        status="skip",
+        max_deviation=float("nan"),
+        tolerance=tolerance,
+        details=reason,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +197,7 @@ def reconcile_arrays(
     if py.shape != ref.shape:
         return CheckResult(
             label=label,
-            passed=False,
+            status="fail",
             max_deviation=float("inf"),
             tolerance=atol,
             details=f"Shape mismatch: python={py.shape}, reference={ref.shape}",
@@ -170,12 +207,12 @@ def reconcile_arrays(
     max_dev = float(np.max(deviations))
     passed = max_dev <= atol
 
-    status = _PASS if passed else _FAIL
-    _log(status, label, f"max deviation = {max_dev:.2e}  (tol={atol:.0e})")
+    symbol = _PASS if passed else _FAIL
+    _log(symbol, label, f"max deviation = {max_dev:.2e}  (tol={atol:.0e})")
 
     return CheckResult(
         label=label,
-        passed=passed,
+        status="pass" if passed else "fail",
         max_deviation=max_dev,
         tolerance=atol,
         details=(
@@ -323,7 +360,7 @@ def _independently_verify_stats(
     )
     results.append(CheckResult(
         label=f"{label} E(r_p)",
-        passed=passed_er,
+        status="pass" if passed_er else "fail",
         max_deviation=dev_er,
         tolerance=TOL_RETURN,
     ))
@@ -339,7 +376,7 @@ def _independently_verify_stats(
     )
     results.append(CheckResult(
         label=f"{label} σ_p",
-        passed=passed_vol,
+        status="pass" if passed_vol else "fail",
         max_deviation=dev_vol,
         tolerance=TOL_VOL,
     ))
@@ -355,7 +392,7 @@ def _independently_verify_stats(
     )
     results.append(CheckResult(
         label=f"{label} Sharpe",
-        passed=passed_sharpe,
+        status="pass" if passed_sharpe else "fail",
         max_deviation=dev_sharpe,
         tolerance=TOL_SHARPE,
     ))
@@ -386,21 +423,21 @@ def run_phase1(
     if excel_mu_raw is not None:
         results.append(reconcile_arrays(mu, excel_mu_raw.flatten(), "μ vector (10 elements)", TOL_MU))
     else:
-        _log(_SKIP, "μ vector reconciliation", "Excel CSV not available — skipping")
+        results.append(_make_skip("μ vector (10 elements)", TOL_MU))
 
     # Σ matrix (100 elements)
     excel_cov_raw = _require_excel_csv(excel_dir / "excel_cov_matrix.csv", "Σ matrix")
     if excel_cov_raw is not None:
         results.append(reconcile_arrays(cov, excel_cov_raw, "Σ matrix (100 elements)", TOL_COV))
     else:
-        _log(_SKIP, "Σ matrix reconciliation", "Excel CSV not available — skipping")
+        results.append(_make_skip("Σ matrix (100 elements)", TOL_COV))
 
     # GMVP weights (10 elements)
     excel_gmvp_raw = _require_excel_csv(excel_dir / "excel_gmvp_weights.csv", "GMVP weights")
     if excel_gmvp_raw is not None:
         results.append(reconcile_arrays(w_gmvp, excel_gmvp_raw.flatten(), "GMVP weights (10 elements)", TOL_GMVP))
     else:
-        _log(_SKIP, "GMVP weights reconciliation", "Excel CSV not available — skipping")
+        results.append(_make_skip("GMVP weights (10 elements)", TOL_GMVP))
 
     # Phase 3 statistics for GMVP (independent recomputation always runs)
     _separator("Phase 1 — GMVP Statistics (Independent Recomputation)")
@@ -448,7 +485,7 @@ def run_phase2(
             _log(_FAIL, f"A={A} Python optimizer", str(exc))
             results.append(CheckResult(
                 label=f"Optimal weights A={A}",
-                passed=False,
+                status="fail",
                 max_deviation=float("inf"),
                 tolerance=TOL_OPTIMAL,
                 details=str(exc),
@@ -467,7 +504,7 @@ def run_phase2(
                 )
             )
         else:
-            _log(_SKIP, f"Excel optimal weights (A={A})", "CSV not found — skipping Excel comparison")
+            results.append(_make_skip(f"Optimal weights (A={A})", TOL_OPTIMAL))
 
         # Independent statistics recomputation (always runs)
         er = portfolio_return(w_python, mu)
@@ -499,6 +536,10 @@ def run_phase3_frontier(
     excel_frontier_path = excel_dir / "excel_frontier.csv"
     if not excel_frontier_path.exists():
         _log(_SKIP, "Frontier reconciliation", "excel_frontier.csv not found")
+        results.append(_make_skip(
+            "Frontier weights (long-only, 100 points)",
+            TOL_FRONTIER,
+        ))
         return results
 
     import pandas as pd  # noqa: PLC0415
@@ -550,11 +591,214 @@ def run_phase3_frontier(
     )
     results.append(CheckResult(
         label=f"Frontier weights ({n_compare} points)",
-        passed=passed,
+        status="pass" if passed else "fail",
         max_deviation=overall_max,
         tolerance=TOL_FRONTIER,
         details=f"Worst frontier point index: {int(np.argmax(max_devs))}",
     ))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: PRD Part 1 additions (short-allowed + tangency + equal-weight)
+# ---------------------------------------------------------------------------
+
+
+def run_phase3b_prd_part1(
+    mu: np.ndarray,
+    cov: np.ndarray,
+    excel_dir: Path,
+) -> list[CheckResult]:
+    """
+    Reconcile the artifacts introduced in Steps 1–3 of the PRD Part 1
+    work: short-allowed GMVP, long-only tangency, short-allowed tangency,
+    short-allowed efficient frontier, equal-weight benchmark.
+
+    All checks SKIP while the corresponding Excel CSVs are absent — the
+    Excel audit model for these artifacts is a separate task. They are
+    enumerated here so that the report makes the Excel coverage gap
+    explicit (rather than silently missing the rows entirely).
+
+    Tangency rows additionally carry the Python solver_path
+    ("primary" | "fallback") for provenance.
+    """
+    _separator("Phase 3b: PRD Part 1 artifacts (short-allowed + tangency + equal-weight)")
+    results: list[CheckResult] = []
+
+    # Lazy-import so reconcile.py can still be imported without a fully
+    # populated backend (e.g. in lightweight CI stages).
+    from optimizer import (  # noqa: PLC0415
+        _compute_constrained_gmvp,
+        compute_efficient_frontier,
+        compute_equal_weight_portfolio,
+        compute_tangency_portfolio,
+    )
+    from portfolio_math import (  # noqa: PLC0415
+        portfolio_return as _pr,
+        portfolio_volatility as _pv,
+        sharpe_ratio as _sr,
+    )
+
+    # --- 1. GMVP (short-allowed) ------------------------------------------
+    w_gmvp_s = _compute_constrained_gmvp(cov, allow_short_selling=True)
+    _log(_INFO, "Py GMVP (short-allowed)", f"E[r]={_pr(w_gmvp_s, mu):.6f} σ={_pv(w_gmvp_s, cov):.6f}")
+
+    path = excel_dir / "excel_gmvp_short.csv"
+    if path.exists():
+        excel_w = _require_excel_csv(path, "GMVP (short-allowed) weights")
+        if excel_w is not None:
+            results.append(
+                reconcile_arrays(
+                    w_gmvp_s,
+                    excel_w.flatten(),
+                    "GMVP (short-allowed) weights",
+                    TOL_GMVP,
+                )
+            )
+        else:
+            results.append(_make_skip("GMVP (short-allowed) weights", TOL_GMVP, "CSV unreadable"))
+    else:
+        results.append(_make_skip("GMVP (short-allowed) weights", TOL_GMVP))
+
+    # --- 2. Tangency (long-only, max_weight=1.0) --------------------------
+    tan_long = compute_tangency_portfolio(
+        mu, cov, max_weight=1.0, allow_short_selling=False
+    )
+    _log(
+        _INFO,
+        "Py Tangency (long-only)",
+        f"Sharpe={tan_long.sharpe:.6f}  solver_path={tan_long.solver_path}",
+    )
+
+    path = excel_dir / "excel_tangency.csv"
+    if path.exists():
+        excel_w = _require_excel_csv(path, "Tangency (long-only) weights")
+        if excel_w is not None:
+            r = reconcile_arrays(
+                tan_long.weights,
+                excel_w.flatten(),
+                "Tangency (long-only) weights",
+                TOL_OPTIMAL,
+            )
+            # Attach solver_path provenance
+            results.append(r._replace(solver_path=tan_long.solver_path))
+        else:
+            results.append(
+                _make_skip("Tangency (long-only) weights", TOL_OPTIMAL, "CSV unreadable")
+                ._replace(solver_path=tan_long.solver_path)
+            )
+    else:
+        results.append(
+            _make_skip("Tangency (long-only) weights", TOL_OPTIMAL)
+            ._replace(solver_path=tan_long.solver_path)
+        )
+
+    # --- 3. Tangency (short-allowed) --------------------------------------
+    tan_short = compute_tangency_portfolio(
+        mu, cov, max_weight=1.0, allow_short_selling=True
+    )
+    _log(
+        _INFO,
+        "Py Tangency (short-allowed)",
+        f"Sharpe={tan_short.sharpe:.6f}  solver_path={tan_short.solver_path}",
+    )
+
+    path = excel_dir / "excel_tangency_short.csv"
+    if path.exists():
+        excel_w = _require_excel_csv(path, "Tangency (short-allowed) weights")
+        if excel_w is not None:
+            r = reconcile_arrays(
+                tan_short.weights,
+                excel_w.flatten(),
+                "Tangency (short-allowed) weights",
+                TOL_OPTIMAL,
+            )
+            results.append(r._replace(solver_path=tan_short.solver_path))
+        else:
+            results.append(
+                _make_skip("Tangency (short-allowed) weights", TOL_OPTIMAL, "CSV unreadable")
+                ._replace(solver_path=tan_short.solver_path)
+            )
+    else:
+        results.append(
+            _make_skip("Tangency (short-allowed) weights", TOL_OPTIMAL)
+            ._replace(solver_path=tan_short.solver_path)
+        )
+
+    # --- 4. Short-allowed efficient frontier (100 points) -----------------
+    path = excel_dir / "excel_frontier_short.csv"
+    if path.exists():
+        try:
+            import pandas as pd  # noqa: PLC0415
+
+            df = pd.read_csv(path)
+            weight_cols = [c for c in df.columns if c.startswith("w") or "weight" in c.lower()]
+            if not weight_cols:
+                results.append(
+                    _make_skip(
+                        "Frontier weights (short-allowed, 100 points)",
+                        TOL_FRONTIER,
+                        "no weight columns detected",
+                    )
+                )
+            else:
+                py_frontier = compute_efficient_frontier(
+                    mu, cov, n_points=len(df), max_weight=1.0, allow_short_selling=True
+                )
+                py_mat = np.array([p.weights for p in py_frontier], dtype=np.float64)
+                excel_mat = df[weight_cols].values.astype(np.float64)
+                n_compare = min(len(excel_mat), len(py_mat))
+                max_devs = np.max(np.abs(excel_mat[:n_compare] - py_mat[:n_compare]), axis=1)
+                overall_max = float(max_devs.max())
+                passed = overall_max <= TOL_FRONTIER
+                _log(
+                    _PASS if passed else _FAIL,
+                    f"Short-allowed frontier weights ({n_compare} × 10)",
+                    f"max deviation = {overall_max:.2e}  (tol={TOL_FRONTIER:.0e})",
+                )
+                results.append(CheckResult(
+                    label=f"Frontier weights (short-allowed, {n_compare} points)",
+                    status="pass" if passed else "fail",
+                    max_deviation=overall_max,
+                    tolerance=TOL_FRONTIER,
+                    details=f"Worst frontier point index: {int(np.argmax(max_devs))}",
+                ))
+        except Exception as exc:  # noqa: BLE001
+            _log(_FAIL, "Short-allowed frontier CSV parse", str(exc))
+            results.append(CheckResult(
+                label="Frontier weights (short-allowed)",
+                status="fail",
+                max_deviation=float("inf"),
+                tolerance=TOL_FRONTIER,
+                details=str(exc),
+            ))
+    else:
+        results.append(_make_skip(
+            "Frontier weights (short-allowed, 100 points)", TOL_FRONTIER
+        ))
+
+    # --- 5. Equal-weight benchmark ----------------------------------------
+    ew = compute_equal_weight_portfolio(mu, cov)
+    path = excel_dir / "excel_equal_weight.csv"
+    if path.exists():
+        excel_w = _require_excel_csv(path, "Equal-weight stats")
+        if excel_w is not None:
+            # Excel CSV for equal-weight is expected to carry the three
+            # stats (E[r], σ, Sharpe) in a single column.
+            ref = excel_w.flatten()
+            py_vec = np.array([ew.expected_return, ew.volatility, ew.sharpe])
+            n_take = min(len(ref), 3)
+            results.append(reconcile_arrays(
+                py_vec[:n_take],
+                ref[:n_take],
+                "Equal-weight (E[r], σ, Sharpe)",
+                TOL_RETURN,
+            ))
+        else:
+            results.append(_make_skip("Equal-weight (E[r], σ, Sharpe)", TOL_RETURN, "CSV unreadable"))
+    else:
+        results.append(_make_skip("Equal-weight (E[r], σ, Sharpe)", TOL_RETURN))
 
     return results
 
@@ -597,7 +841,7 @@ def generate_json_report(
     elapsed_seconds: float,
 ) -> dict:
     """Build the machine-readable reconciliation_report.json payload."""
-    all_passed = all(r.passed for r in results)
+    # (pass/fail/skip counts are computed below from the new status field)
 
     # Side-by-side GMVP table (Python vs Excel if available)
     excel_gmvp_raw = _read_excel_csv_quiet(excel_dir / "excel_gmvp_weights.csv")
@@ -622,22 +866,41 @@ def generate_json_report(
             row_opt["deviation"] = round(abs(pw - ew), 10)
         opt_comparison.append(row_opt)
 
+    passed_count = sum(1 for r in results if r.status == "pass")
+    failed_count = sum(1 for r in results if r.status == "fail")
+    skipped_count = sum(1 for r in results if r.status == "skip")
+
+    # overall_status: FAIL if any check failed; SKIP if nothing actually
+    # verified against Excel (pass_count == 0 but skip_count > 0);
+    # otherwise PASS. Mirrors the CLI summary logic exactly.
+    if failed_count > 0:
+        overall_status = "FAIL"
+    elif passed_count == 0:
+        overall_status = "SKIP"
+    else:
+        overall_status = "PASS"
+
     return {
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "git_commit_sha": _get_git_sha(),
         "excel_file_version": _get_excel_version(excel_dir),
-        "overall_status": "PASS" if all_passed else "FAIL",
+        "overall_status": overall_status,
         "total_checks": len(results),
-        "passed_checks": sum(1 for r in results if r.passed),
-        "failed_checks": sum(1 for r in results if not r.passed),
+        "passed_checks": passed_count,
+        "failed_checks": failed_count,
+        "skipped_checks": skipped_count,
         "elapsed_seconds": round(elapsed_seconds, 3),
         "checks": [
             {
                 "label": r.label,
-                "status": "PASS" if r.passed else "FAIL",
-                "max_deviation": r.max_deviation,
+                "status": r.status.upper(),  # "PASS" | "FAIL" | "SKIP"
+                "max_deviation": (
+                    None if r.status == "skip" and not np.isfinite(r.max_deviation)
+                    else r.max_deviation
+                ),
                 "tolerance": r.tolerance,
                 "details": r.details,
+                **({"solver_path": r.solver_path} if r.solver_path else {}),
             }
             for r in results
         ],
@@ -649,7 +912,18 @@ def generate_json_report(
 def generate_markdown_report(report: dict, mu: np.ndarray, cov: np.ndarray) -> str:
     """Generate the human-readable reconciliation_report.md content."""
     overall = report["overall_status"]
-    badge = "✅ PASS" if overall == "PASS" else "❌ FAIL"
+    badge = {
+        "PASS": "✅ PASS",
+        "FAIL": "❌ FAIL",
+        "SKIP": "⚠ SKIP (not verified against Excel)",
+    }.get(overall, overall)
+
+    summary_parts = [f"**{report['passed_checks']} passed**"]
+    if report.get("skipped_checks", 0):
+        summary_parts.append(f"**{report['skipped_checks']} skipped** (no Excel reference)")
+    if report.get("failed_checks", 0):
+        summary_parts.append(f"**{report['failed_checks']} failed**")
+    summary_line = ", ".join(summary_parts) + f" out of {report['total_checks']} total."
 
     lines: list[str] = [
         "# Robo-Adviser Reconciliation Report",
@@ -660,21 +934,43 @@ def generate_markdown_report(report: dict, mu: np.ndarray, cov: np.ndarray) -> s
         f"**Excel Model Version:** {report['excel_file_version']}  ",
         f"**Elapsed Time:** {report['elapsed_seconds']:.3f}s  ",
         "",
-        f"**{report['passed_checks']} / {report['total_checks']} checks passed.**",
+        summary_line,
+        "",
+        "> **SKIP semantics:** a check reports SKIP when no Excel reference CSV is "
+        "found under `data/reconciliation/`. Earlier versions of this report silently "
+        "dropped skipped rows, which made the pass count look stronger than it was. "
+        "Each SKIP row below identifies a reconciliation gap that the Excel audit model "
+        "will eventually close.",
         "",
         "---",
         "",
         "## Check Results",
         "",
-        "| # | Check | Status | Max Deviation | Tolerance |",
-        "|---|-------|--------|--------------|-----------|",
+        "| # | Check | Status | Max Deviation | Tolerance | Notes |",
+        "|---|-------|--------|--------------|-----------|-------|",
     ]
 
+    status_badge = {
+        "PASS": "✅ PASS",
+        "FAIL": "❌ FAIL",
+        "SKIP": "⚠ SKIP (no Excel reference)",
+    }
+
     for i, check in enumerate(report["checks"], start=1):
-        st = "✅ PASS" if check["status"] == "PASS" else "❌ FAIL"
+        st = status_badge.get(check["status"], check["status"])
+        if check["status"] == "SKIP":
+            dev_cell = "—"
+        else:
+            dev_cell = f"`{check['max_deviation']:.2e}`"
+        notes_parts: list[str] = []
+        if check.get("solver_path"):
+            notes_parts.append(f"solver: `{check['solver_path']}`")
+        if check["status"] == "SKIP" and check.get("details"):
+            notes_parts.append(check["details"])
+        notes_cell = "; ".join(notes_parts) if notes_parts else ""
         lines.append(
             f"| {i} | {check['label']} | {st} | "
-            f"`{check['max_deviation']:.2e}` | `{check['tolerance']:.0e}` |"
+            f"{dev_cell} | `{check['tolerance']:.0e}` | {notes_cell} |"
         )
 
     lines += [
@@ -772,7 +1068,9 @@ def generate_pdf_report(report: dict, output_path: Path) -> None:
         f"Git commit (backend): {report['git_commit_sha']}\n"
         f"Excel exports version: {_pdf_ascii(str(report['excel_file_version']))}\n"
         f"Overall status: {report['overall_status']}\n"
-        f"Checks passed: {report['passed_checks']} / {report['total_checks']}\n"
+        f"Checks: {report['passed_checks']} passed, "
+        f"{report.get('skipped_checks', 0)} skipped (no Excel reference), "
+        f"{report['failed_checks']} failed  (total {report['total_checks']})\n"
         f"Elapsed (s): {report['elapsed_seconds']}\n"
     )
     pdf.multi_cell(epw, 5, _pdf_ascii(summary))
@@ -781,9 +1079,14 @@ def generate_pdf_report(report: dict, output_path: Path) -> None:
     pdf.multi_cell(epw, 6, "Per-check results")
     pdf.set_font("Helvetica", size=8)
     for i, check in enumerate(report.get("checks", []), start=1):
+        status = check.get("status", "?")
+        dev = check.get("max_deviation")
+        dev_str = "n/a (skip)" if status == "SKIP" or dev is None else str(dev)
+        solver = check.get("solver_path")
+        trailer = f"  [solver={solver}]" if solver else ""
         line = (
-            f"{i}. [{check.get('status', '?')}] {check.get('label', '')}: "
-            f"max_dev={check.get('max_deviation')!s} tol={check.get('tolerance')!s}"
+            f"{i}. [{status}] {check.get('label', '')}: "
+            f"max_dev={dev_str} tol={check.get('tolerance')!s}{trailer}"
         )
         pdf.multi_cell(epw, 4, _pdf_ascii(line))
     pdf.ln(2)
@@ -889,28 +1192,39 @@ def run_reconciliation(excel_dir: Path | None = None) -> dict:
     # --- Phase 3: Frontier --------------------------------------------------
     results.extend(run_phase3_frontier(mu, cov, excel_dir))
 
+    # --- Phase 3b: PRD Part 1 additions -------------------------------------
+    results.extend(run_phase3b_prd_part1(mu, cov, excel_dir))
+
     # --- Summary ------------------------------------------------------------
     elapsed = time.monotonic() - t_start
     _separator("Reconciliation Summary")
-    passed = sum(1 for r in results if r.passed)
-    failed = sum(1 for r in results if not r.passed)
+    passed = sum(1 for r in results if r.status == "pass")
+    failed = sum(1 for r in results if r.status == "fail")
+    skipped = sum(1 for r in results if r.status == "skip")
     total = len(results)
 
     print(f"\n  Total checks   : {total}")
     print(f"  Passed         : {passed}")
     print(f"  Failed         : {failed}")
+    print(f"  Skipped        : {skipped}  (no Excel reference)")
     print(f"  Elapsed        : {elapsed:.3f}s")
 
-    if failed == 0 and total > 0:
-        print(f"\n{_PASS} ALL RECONCILIATION CHECKS PASSED")
-        overall = "PASS"
-    elif total == 0:
-        print(f"\n{_SKIP} NO CHECKS RAN — Excel CSVs not yet available")
+    # Overall status treats skips as "not verified" — only FAIL is terminal.
+    # If there are zero pass/fail results (everything skipped), overall is
+    # SKIP: nothing has actually been verified against Excel.
+    if failed > 0:
+        print(f"\n{_FAIL} {failed} CHECK(S) FAILED — see details above")
+        overall = "FAIL"
+    elif passed == 0:
+        print(f"\n{_SKIP} NO CHECKS VERIFIED AGAINST EXCEL — all rows skipped")
         print("         Provide Excel baseline exports to /data/reconciliation/ and re-run.")
         overall = "SKIP"
     else:
-        print(f"\n{_FAIL} {failed} CHECK(S) FAILED — see details above")
-        overall = "FAIL"
+        msg = f"{passed} check(s) passed"
+        if skipped:
+            msg += f", {skipped} skipped (no Excel reference)"
+        print(f"\n{_PASS} {msg}")
+        overall = "PASS"
 
     # --- Generate reports ---------------------------------------------------
     _separator("Generating Reports")
@@ -960,7 +1274,7 @@ def assert_mu_reconciliation(excel_dir: Path | None = None) -> CheckResult:
         pytest.skip("Excel μ CSV not available")
 
     result = reconcile_arrays(mu, excel_raw.flatten(), "μ vector", TOL_MU)
-    assert result.passed, (
+    assert result.status == "pass", (
         f"μ vector reconciliation FAILED: max deviation = {result.max_deviation:.2e} "
         f"(tolerance = {TOL_MU:.0e})"
     )
@@ -979,7 +1293,7 @@ def assert_cov_reconciliation(excel_dir: Path | None = None) -> CheckResult:
         pytest.skip("Excel Σ CSV not available")
 
     result = reconcile_arrays(cov, excel_raw, "Σ matrix", TOL_COV)
-    assert result.passed, (
+    assert result.status == "pass", (
         f"Σ matrix reconciliation FAILED: max deviation = {result.max_deviation:.2e} "
         f"(tolerance = {TOL_COV:.0e})"
     )
@@ -999,7 +1313,7 @@ def assert_gmvp_reconciliation(excel_dir: Path | None = None) -> CheckResult:
         pytest.skip("Excel GMVP CSV not available")
 
     result = reconcile_arrays(w_gmvp, excel_raw.flatten(), "GMVP weights", TOL_GMVP)
-    assert result.passed, (
+    assert result.status == "pass", (
         f"GMVP reconciliation FAILED: max deviation = {result.max_deviation:.2e} "
         f"(tolerance = {TOL_GMVP:.0e})"
     )
@@ -1019,7 +1333,7 @@ def assert_optimal_reconciliation(A: float, excel_dir: Path | None = None) -> Ch
         pytest.skip(f"Excel optimal CSV for A={A} not available")
 
     result = reconcile_arrays(w_python, excel_raw.flatten(), f"Optimal weights A={A}", TOL_OPTIMAL)
-    assert result.passed, (
+    assert result.status == "pass", (
         f"Optimal portfolio reconciliation FAILED for A={A}: "
         f"max deviation = {result.max_deviation:.2e} (tolerance = {TOL_OPTIMAL:.0e})"
     )
