@@ -24,12 +24,15 @@ tangency on this dataset is numerically degenerate (see docs §4).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
 from config import RISK_FREE_RATE
+
+_logger = logging.getLogger(__name__)
 from portfolio_math import (
     portfolio_return,
     portfolio_variance,
@@ -447,6 +450,28 @@ def _bounds_respected(w: np.ndarray, bounds: list[tuple[float, float]], tol: flo
     return all(lo - tol <= wi <= hi + tol for wi, (lo, hi) in zip(w, bounds))
 
 
+def _max_excess_under_box(
+    excess: np.ndarray, bounds: list[tuple[float, float]]
+) -> float:
+    """
+    Closed-form ``max_{w ∈ box} (μ - rf·1)ᵀ w`` with no sum constraint.
+
+    Our primary tangency QP drops ``sum(w) = 1`` (Sharpe is scale-invariant;
+    the renormalisation after solve handles it). Under a box alone,
+    the LP is coordinate-separable: push each ``w_i`` to its sign-favouring
+    bound.
+
+    Used as a constant-time feasibility check: if this maximum is below 1,
+    the linear equality ``(μ - rf·1)ᵀ w = 1`` cannot be satisfied inside the
+    box and SLSQP is guaranteed to fail. Skipping the doomed call saves
+    ~800 ms per tangency on the current dataset.
+    """
+    total = 0.0
+    for e, (lo, hi) in zip(excess, bounds):
+        total += hi * float(e) if e > 0.0 else lo * float(e)
+    return total
+
+
 def compute_tangency_portfolio(
     mu: np.ndarray,
     cov: np.ndarray,
@@ -537,25 +562,41 @@ def compute_tangency_portfolio(
     primary_constraints = [{"type": "eq", "fun": lambda w, e=excess: float(e @ w - 1.0)}]
 
     primary_candidate: PortfolioResult | None = None
-    try:
-        primary = minimize(
-            fun=lambda w, c=cov: float(w @ c @ w),
-            x0=x0_primary,
-            method="SLSQP",
-            bounds=bounds,
-            constraints=primary_constraints,
-            options={"ftol": 1e-12, "maxiter": 2000},
-        )
-    except Exception:  # noqa: BLE001 — any SLSQP internal error falls through
-        primary = None
 
-    if primary is not None and primary.success:
-        w_raw = primary.x.astype(np.float64)
-        s = float(w_raw.sum())
-        if s > 1e-9:
-            w_tan = w_raw / s
-            if _bounds_respected(w_tan, bounds):
-                primary_candidate = _finalise(w_tan, "primary")
+    # Constant-time feasibility pre-check. SLSQP with `(μ-rf·1)ᵀw = 1` inside
+    # a box `w ∈ bounds` (no sum constraint here — see docstring) is feasible
+    # iff the box itself admits some w with excess ≥ 1. If it doesn't, SLSQP
+    # runs to maxiter failing — ~800 ms of waste per call on the current
+    # dataset. Skip straight to fallback in that case.
+    max_achievable_excess = _max_excess_under_box(excess, bounds)
+    primary_is_feasible = max_achievable_excess >= 1.0 - 1e-12
+
+    if not primary_is_feasible:
+        _logger.debug(
+            "Tangency primary infeasible under bounds=%s: "
+            "max achievable (μ-rf)ᵀw = %.6f < 1.0; using fallback",
+            bounds, max_achievable_excess,
+        )
+    else:
+        try:
+            primary = minimize(
+                fun=lambda w, c=cov: float(w @ c @ w),
+                x0=x0_primary,
+                method="SLSQP",
+                bounds=bounds,
+                constraints=primary_constraints,
+                options={"ftol": 1e-12, "maxiter": 2000},
+            )
+        except Exception:  # noqa: BLE001 — any SLSQP internal error falls through
+            primary = None
+
+        if primary is not None and primary.success:
+            w_raw = primary.x.astype(np.float64)
+            s = float(w_raw.sum())
+            if s > 1e-9:
+                w_tan = w_raw / s
+                if _bounds_respected(w_tan, bounds):
+                    primary_candidate = _finalise(w_tan, "primary")
 
     # -----------------------------------------------------------------
     # Fallback: direct Sharpe-max SLSQP (always run — see docstring)
