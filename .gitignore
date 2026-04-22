@@ -29,3 +29,9 @@ out/
 .vscode/
 *.swp
 .DS_Store
+# Excel workbook template (kept out of git by team preference — the
+# populate_workbook.py script reads this file locally but it is not
+# version-controlled in this repo)
+Group_BMD5302_Robo.xlsx
+# openpyxl-generated filled workbook — regenerate with `python populate_workbook.py`
+Group_BMD5302_Robo_filled.xlsx
