@@ -259,11 +259,22 @@ def _compute_python_optimal(
     mu: np.ndarray,
     cov: np.ndarray,
     A: float,
+    max_weight: float = 0.4,
 ) -> np.ndarray:
-    """Compute optimal portfolio weights for a given A using SLSQP."""
+    """
+    Compute optimal portfolio weights for a given A using SLSQP.
+
+    ``max_weight`` defaults to 0.4 to match the Excel workbook's
+    ``Optimal!B4`` per-asset cap and the frontend's
+    ``DEFAULT_OPTIMIZE_CONSTRAINTS.max_single_weight``. Previously this
+    function used the optimiser's default ``max_weight=1.0``, which
+    made every Phase 2 reconciliation fail at ~0.6 deviation because
+    uncapped Python would concentrate 100% in QQQ while capped Excel
+    landed on the 40/40/20 corner.
+    """
     from optimizer import compute_optimal_portfolio  # noqa: PLC0415
 
-    result = compute_optimal_portfolio(mu, cov, A)
+    result = compute_optimal_portfolio(mu, cov, A, max_weight=max_weight)
     return result.weights
 
 
@@ -272,18 +283,27 @@ def _compute_python_frontier(
     cov: np.ndarray,
     n_points: int = 50,
     allow_short_selling: bool = False,
+    max_weight: float = 0.4,
 ) -> list[np.ndarray]:
     """
     Return a list of weight vectors for n_points frontier portfolios.
 
+    ``max_weight`` defaults to 0.4 to match the Excel workbook's
+    Frontier sheet cap (same reason as _compute_python_optimal —
+    uncapped vs capped frontier paths diverge immediately at the
+    high-return end, producing ~1.0 deviations on every row).
+
     ``allow_short_selling`` is forwarded to the optimizer; default False
-    preserves existing Phase 3 reconciliation behaviour (long-only frontier
-    vs excel_frontier.csv).
+    preserves existing Phase 3 reconciliation behaviour (long-only
+    frontier vs excel_frontier.csv). When True, ``max_weight`` is
+    ignored by compute_efficient_frontier (bounds become [-1, 2]).
     """
     from optimizer import compute_efficient_frontier  # noqa: PLC0415
 
     pts = compute_efficient_frontier(
-        mu, cov, n_points=n_points, allow_short_selling=allow_short_selling
+        mu, cov, n_points=n_points,
+        max_weight=max_weight,
+        allow_short_selling=allow_short_selling,
     )
     return [p.weights for p in pts]
 
@@ -351,11 +371,17 @@ def _require_excel_csv(path: Path, label: str) -> np.ndarray | None:
 #     task spec, the five A-value reconciliations remain CSV-driven
 #     (the user saves excel_optimal_A{VALUE}.csv after each Solver run).
 
-# Filename candidates at the repo root, in preference order.
+# Filename candidates at the repo root, in preference order. The team's
+# final workbook is group-prefixed ("A13_BMD5302_Robo.xlsm" etc.), but
+# during development the canonical "Group_..." names are used. The finder
+# below checks both exact names (preference order) and a glob fallback
+# "*BMD5302_Robo.xls{m,x}" so any group-prefixed filename works without
+# a code change.
 _WORKBOOK_CANDIDATES = (
-    "Group_BMD5302_Robo.xlsm",   # macro-enabled, final state
-    "Group_BMD5302_Robo.xlsx",   # template / pre-macro state
+    "Group_BMD5302_Robo.xlsm",   # canonical, macro-enabled
+    "Group_BMD5302_Robo.xlsx",   # canonical, pre-macro template
 )
+_WORKBOOK_GLOB_PATTERNS = ("*BMD5302_Robo.xlsm", "*BMD5302_Robo.xlsx")
 
 # Cell map per reconciliation key. Each entry describes what to read and
 # how to reshape the result.
@@ -399,12 +425,32 @@ _RECONCILIATION_CELL_MAP: list[dict] = [
 
 
 def _find_excel_workbook(project_root: Path) -> Path | None:
-    """Locate the audit workbook at the repo root. Returns None if absent."""
+    """
+    Locate the audit workbook at the repo root.
+
+    Preference order:
+      1. Canonical names (``Group_BMD5302_Robo.xlsm`` then ``.xlsx``)
+      2. Any file matching ``*BMD5302_Robo.xls{m,x}`` via glob — picks up
+         group-prefixed filenames like ``A13_BMD5302_Robo.xlsm``. When
+         multiple matches exist, ``.xlsm`` is preferred and ties broken
+         by most-recent modification time.
+
+    Returns None if nothing matches.
+    """
     for name in _WORKBOOK_CANDIDATES:
         path = project_root / name
         if path.exists():
             return path
-    return None
+
+    matches: list[Path] = []
+    for pattern in _WORKBOOK_GLOB_PATTERNS:
+        matches.extend(project_root.glob(pattern))
+    if not matches:
+        return None
+
+    # Prefer .xlsm, then most-recent mtime
+    matches.sort(key=lambda p: (0 if p.suffix == ".xlsm" else 1, -p.stat().st_mtime))
+    return matches[0]
 
 
 def _cells_to_array(cells: tuple, shape: str) -> np.ndarray | None:
@@ -558,12 +604,158 @@ def _load_excel_optimal_weights(
 ) -> np.ndarray | None:
     """
     Load the optimal weights CSV for a specific A value.
-    The Excel baseline must provide files named: excel_optimal_A{A}.csv
-    e.g. excel_optimal_A3.5.csv  (10 rows × 1 column)
+
+    Accepted filename conventions (tries each in order):
+      * excel_optimal_A{A}.csv          — e.g. A=0.5 → excel_optimal_A0.5.csv
+      * excel_optimal_A{A*10:g}.csv     — e.g. A=0.5 → excel_optimal_A05.csv
+        (the convention the workbook's own instruction at Optimal!A44 uses)
+
+    Content format is tolerated in two shapes:
+      * Headerless numeric matrix (the original reconciliation-block
+        export format)
+      * Full-sheet CSV dump with title/label rows — the "Reconciliation
+        export" block is extracted heuristically.
+
+    If the file is actually an xlsx blob renamed to .csv (detected via
+    the ZIP magic number ``PK\\x03\\x04``), the reader opens it as a
+    workbook and pulls the Optimal-sheet reconciliation block directly.
     """
-    fname = f"excel_optimal_A{A}.csv"
-    path = excel_dir / fname
-    return _require_excel_csv(path, f"Excel optimal weights (A={A})")
+    # Try both naming conventions. {A} produces "0.5", "2.0", "10.0";
+    # {int(A*10)} produces "5", "20", "100" — but the user's workbook
+    # writes "A05", "A20", "A100", so zero-pad to 2 digits when < 10.
+    candidates: list[Path] = [
+        excel_dir / f"excel_optimal_A{A}.csv",
+        excel_dir / f"excel_optimal_A{int(round(A * 10)):02d}.csv",
+        # Also bare integer form in case someone doesn't zero-pad
+        excel_dir / f"excel_optimal_A{int(round(A * 10))}.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return _read_optimal_file(path, f"Excel optimal weights (A={A})")
+    _log(_SKIP, f"Excel optimal weights (A={A})",
+         f"none of the candidate CSV filenames exist in {excel_dir}")
+    return None
+
+
+def _read_optimal_file(path: Path, label: str) -> np.ndarray | None:
+    """
+    Read a file that may be (a) a proper CSV matrix, (b) a full-sheet CSV
+    dump with the reconciliation export block embedded, or (c) an xlsx
+    file that was renamed to .csv. Returns the 10-weight vector as a
+    1-D ndarray or None on failure.
+    """
+    # Detect xlsx-as-csv via ZIP magic header (all xlsx files start with "PK")
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(4)
+    except Exception as exc:  # noqa: BLE001
+        _log(_FAIL, label, f"could not read {path.name}: {exc}")
+        return None
+
+    if head[:2] == b"PK":
+        # xlsx in disguise — open via openpyxl
+        return _extract_optimal_block_from_xlsx(path, label)
+
+    # Otherwise treat as a text CSV (either matrix or full-sheet dump)
+    return _extract_optimal_block_from_csv(path, label)
+
+
+def _extract_optimal_block_from_csv(path: Path, label: str) -> np.ndarray | None:
+    """
+    Extract the 10 optimal weights from a CSV that may be either a pure
+    matrix or a full-sheet dump. The reconciliation export block is
+    identified by a header row containing "ticker" followed by 10 rows
+    of (fund-code, weight) pairs.
+    """
+    import csv  # noqa: PLC0415
+
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            rows = list(csv.reader(fh))
+    except Exception as exc:  # noqa: BLE001
+        _log(_FAIL, label, f"could not parse {path.name}: {exc}")
+        return None
+
+    # Find a "ticker,weight" header row; the next 10 non-empty rows are the weights
+    for i, row in enumerate(rows):
+        cells = [c.strip().lower() for c in row if c is not None]
+        if "ticker" in cells and any("weight" in c for c in cells):
+            # Found the reconciliation block header
+            weights: list[float] = []
+            for data_row in rows[i + 1 : i + 1 + 10]:
+                if len(data_row) < 2:
+                    continue
+                try:
+                    weights.append(float(data_row[1]))
+                except (ValueError, TypeError):
+                    # Non-numeric — not a weight row
+                    return None
+            if len(weights) == 10:
+                return np.array(weights, dtype=np.float64).reshape(-1, 1)
+
+    # Fallback: try to parse as a simple headerless numeric CSV
+    try:
+        import pandas as pd  # noqa: PLC0415
+
+        arr = pd.read_csv(path, header=None).values.astype(np.float64)
+        if arr.size >= 10:
+            return arr[:10]
+    except Exception:  # noqa: BLE001
+        pass
+
+    _log(_FAIL, label,
+         f"could not locate 10-weight reconciliation block in {path.name}")
+    return None
+
+
+def _extract_optimal_block_from_xlsx(path: Path, label: str) -> np.ndarray | None:
+    """
+    Read the Optimal-sheet reconciliation block from an .xlsx file that
+    was (incorrectly) renamed to .csv. Looks for a sheet named
+    "Optimal" and reads cells B49:B58 (the 10 weight rows of the
+    reconciliation export block, per the canonical workbook layout).
+
+    openpyxl rejects the .csv extension, so we read the bytes first and
+    pass them via BytesIO — the content is valid xlsx regardless of the
+    extension the user happened to save it under.
+    """
+    try:
+        import io  # noqa: PLC0415
+        from openpyxl import load_workbook  # noqa: PLC0415
+
+        with open(path, "rb") as fh:
+            data = fh.read()
+        wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    except Exception as exc:  # noqa: BLE001
+        _log(_FAIL, label, f"xlsx-in-csv detected but unreadable: {exc}")
+        return None
+
+    sheet_name = "Optimal" if "Optimal" in wb.sheetnames else wb.sheetnames[0]
+    ws = wb[sheet_name]
+
+    # Canonical weight block: Optimal!B49:B58 (10 rows, 1 col)
+    try:
+        cells = ws["B49:B58"]
+    except Exception:  # noqa: BLE001
+        return None
+
+    weights: list[float] = []
+    for row in cells:
+        for cell in row:
+            v = cell.value
+            if v is None:
+                return None
+            try:
+                weights.append(float(v))
+            except (TypeError, ValueError):
+                return None
+    if len(weights) != 10:
+        _log(_FAIL, label,
+             f"xlsx-in-csv: expected 10 weights at Optimal!B49:B58, got {len(weights)}")
+        return None
+
+    _log(_INFO, label, f"source: xlsx file (misnamed .csv) → Optimal!B49:B58")
+    return np.array(weights, dtype=np.float64).reshape(-1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -933,9 +1125,13 @@ def run_phase3b_prd_part1(
     else:
         results.append(_make_skip("GMVP (short-allowed) weights", TOL_GMVP))
 
-    # --- 2. Tangency (long-only, max_weight=1.0) --------------------------
+    # --- 2. Tangency (long-only) ------------------------------------------
+    # max_weight=0.4 matches the Excel workbook's Tangency!B4 cap so the
+    # reconciliation compares like-for-like. Using 1.0 here would make
+    # Python's uncapped tangency (100% QQQ) disagree with Excel's capped
+    # (40% SPY + 40% QQQ + 20% XLV) by ~0.6 on every weight.
     tan_long = compute_tangency_portfolio(
-        mu, cov, max_weight=1.0, allow_short_selling=False
+        mu, cov, max_weight=0.4, allow_short_selling=False
     )
     _log(
         _INFO,
