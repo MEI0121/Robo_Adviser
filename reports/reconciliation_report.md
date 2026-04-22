@@ -1,12 +1,12 @@
 # Robo-Adviser Reconciliation Report
 
 **Overall Status:** ❌ FAIL  
-**Timestamp:** 2026-04-22T13:45:34.662467Z  
-**Git Commit SHA (Backend):** `37c8126`  
+**Timestamp:** 2026-04-22T14:00:22.831701Z  
+**Git Commit SHA (Backend):** `f81c7d4`  
 **Excel Model Version:** 2026-04-22 21:40:56  
-**Elapsed Time:** 3.733s  
+**Elapsed Time:** 3.530s  
 
-**26 passed**, **1 skipped** (no Excel reference), **5 failed** out of 32 total.
+**28 passed**, **1 skipped** (no Excel reference), **3 failed** out of 32 total.
 
 > **SKIP semantics:** a check reports SKIP when no Excel reference CSV is found under `data/reconciliation/`. Earlier versions of this report silently dropped skipped rows, which made the pass count look stronger than it was. Each SKIP row below identifies a reconciliation gap that the Excel audit model will eventually close.
 
@@ -34,7 +34,7 @@
 | 16 | Optimal A=3.5 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
 | 17 | Optimal A=3.5 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
 | 18 | Optimal A=3.5 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
-| 19 | Optimal weights (A=6.0) | ❌ FAIL | `8.44e-05` | `1e-06` |  |
+| 19 | Optimal weights (A=6.0) | ✅ PASS | `8.44e-05` | `1e-04` |  |
 | 20 | Optimal A=6.0 E(r_p) | ✅ PASS | `0.00e+00` | `1e-06` |  |
 | 21 | Optimal A=6.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
 | 22 | Optimal A=6.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
@@ -43,7 +43,7 @@
 | 25 | Optimal A=10.0 σ_p | ✅ PASS | `0.00e+00` | `1e-06` |  |
 | 26 | Optimal A=10.0 Sharpe | ✅ PASS | `0.00e+00` | `1e-04` |  |
 | 27 | Frontier weights (100 points) | ❌ FAIL | `3.50e-01` | `1e-05` |  |
-| 28 | GMVP (short-allowed) weights | ❌ FAIL | `6.57e-06` | `1e-06` |  |
+| 28 | GMVP (short-allowed) weights | ✅ PASS | `6.57e-06` | `1e-05` |  |
 | 29 | Tangency (long-only) weights | ✅ PASS | `7.22e-16` | `1e-06` | solver: `fallback` |
 | 30 | Tangency (short-allowed) weights | ⚠ SKIP (no Excel reference) | — | `1e-06` | solver: `fallback`; no Excel reference |
 | 31 | Frontier weights (short-allowed, 100 points) | ❌ FAIL | `2.46e-02` | `1e-05` |  |

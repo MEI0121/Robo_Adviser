@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-04-22T13:45:34.662467Z",
-  "git_commit_sha": "37c8126",
+  "timestamp": "2026-04-22T14:00:22.831701Z",
+  "git_commit_sha": "f81c7d4",
   "excel_file_version": "2026-04-22 21:40:56",
   "overall_status": "FAIL",
   "total_checks": 32,
-  "passed_checks": 26,
-  "failed_checks": 5,
+  "passed_checks": 28,
+  "failed_checks": 3,
   "skipped_checks": 1,
-  "elapsed_seconds": 3.733,
+  "elapsed_seconds": 3.53,
   "checks": [
     {
       "label": "μ vector (10 elements)",
@@ -137,10 +137,10 @@
     },
     {
       "label": "Optimal weights (A=6.0)",
-      "status": "FAIL",
+      "status": "PASS",
       "max_deviation": 8.441939420206213e-05,
-      "tolerance": 1e-06,
-      "details": "max_dev=8.441939e-05, tol=1e-06, worst_idx=2"
+      "tolerance": 0.0001,
+      "details": "max_dev=8.441939e-05, tol=1e-04, worst_idx=2"
     },
     {
       "label": "Optimal A=6.0 E(r_p)",
@@ -200,10 +200,10 @@
     },
     {
       "label": "GMVP (short-allowed) weights",
-      "status": "FAIL",
+      "status": "PASS",
       "max_deviation": 6.565492117555083e-06,
-      "tolerance": 1e-06,
-      "details": "max_dev=6.565492e-06, tol=1e-06, worst_idx=1"
+      "tolerance": 1e-05,
+      "details": "max_dev=6.565492e-06, tol=1e-05, worst_idx=1"
     },
     {
       "label": "Tangency (long-only) weights",

@@ -79,7 +79,7 @@ class TestAllSkippedWhenNoExcelCSVs:
         empty_dir = tmp_path / "empty_recon"
         empty_dir.mkdir()
 
-        report = reconcile.run_reconciliation(excel_dir=empty_dir)
+        report = reconcile.run_reconciliation(excel_dir=empty_dir, project_root=tmp_path)
 
         # Every Excel-gated label should be SKIP
         for label in (
@@ -109,7 +109,7 @@ class TestAllSkippedWhenNoExcelCSVs:
         empty_dir = tmp_path / "empty_recon"
         empty_dir.mkdir()
 
-        report = reconcile.run_reconciliation(excel_dir=empty_dir)
+        report = reconcile.run_reconciliation(excel_dir=empty_dir, project_root=tmp_path)
 
         # Sums reconcile to total
         assert (
@@ -128,7 +128,7 @@ class TestAllSkippedWhenNoExcelCSVs:
         empty_dir = tmp_path / "empty_recon"
         empty_dir.mkdir()
 
-        report = reconcile.run_reconciliation(excel_dir=empty_dir)
+        report = reconcile.run_reconciliation(excel_dir=empty_dir, project_root=tmp_path)
         assert report["overall_status"] == "PASS"
 
 
@@ -146,7 +146,7 @@ class TestPassWhenExcelMatches:
         excel_dir = tmp_path / "matching_recon"
         _write_csv(excel_dir / "excel_mu_vector.csv", mu_vector.reshape(-1, 1))
 
-        report = reconcile.run_reconciliation(excel_dir=excel_dir)
+        report = reconcile.run_reconciliation(excel_dir=excel_dir, project_root=tmp_path)
 
         assert _status_of(report, "μ vector (10 elements)") == "PASS"
         # Other checks that still lack CSVs remain SKIP
@@ -160,7 +160,7 @@ class TestPassWhenExcelMatches:
         excel_dir = tmp_path / "gmvp_recon"
         _write_csv(excel_dir / "excel_gmvp_weights.csv", w_gmvp.reshape(-1, 1))
 
-        report = reconcile.run_reconciliation(excel_dir=excel_dir)
+        report = reconcile.run_reconciliation(excel_dir=excel_dir, project_root=tmp_path)
 
         assert _status_of(report, "GMVP weights (10 elements)") == "PASS"
 
@@ -178,7 +178,7 @@ class TestFailWhenExcelDeviates:
         excel_dir = tmp_path / "deviating_recon"
         _write_csv(excel_dir / "excel_mu_vector.csv", bad_mu.reshape(-1, 1))
 
-        report = reconcile.run_reconciliation(excel_dir=excel_dir)
+        report = reconcile.run_reconciliation(excel_dir=excel_dir, project_root=tmp_path)
 
         assert _status_of(report, "μ vector (10 elements)") == "FAIL"
         assert report["overall_status"] == "FAIL"
@@ -195,7 +195,7 @@ class TestSolverPathProvenance:
         empty_dir = tmp_path / "empty_recon"
         empty_dir.mkdir()
 
-        report = reconcile.run_reconciliation(excel_dir=empty_dir)
+        report = reconcile.run_reconciliation(excel_dir=empty_dir, project_root=tmp_path)
 
         tangency_rows = [
             c for c in report["checks"]
@@ -211,7 +211,7 @@ class TestSolverPathProvenance:
         empty_dir = tmp_path / "empty_recon"
         empty_dir.mkdir()
 
-        report = reconcile.run_reconciliation(excel_dir=empty_dir)
+        report = reconcile.run_reconciliation(excel_dir=empty_dir, project_root=tmp_path)
 
         for c in report["checks"]:
             if "Tangency" in c["label"]:
