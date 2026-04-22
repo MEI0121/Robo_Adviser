@@ -181,6 +181,8 @@ Let \(D\) be the diagonal matrix of asset volatilities extracted from \(\boldsym
 
 Jobson and Korkie (1980) and subsequent literature emphasize that \(\hat{\boldsymbol{\mu}}\) and \(\hat{\boldsymbol{\Sigma}}\) are estimated with error. Mean returns are particularly noisy at monthly frequency even over a decade; covariance estimates are more stable but still imperfect. Robust portfolio methods shrink \(\hat{\boldsymbol{\Sigma}}\) toward structured targets or impose Bayesian priors (Black–Litterman blends market equilibrium with views). This implementation stays classical for clarity, but the report must acknowledge that out-of-sample performance may underperform the in-sample efficient frontier—a phenomenon often called the “Markowitz enigma” when optimization overfits sample means.
 
+The choice of estimation window is itself a source of parameter risk. Rolling and expanding windows produce different \(\hat{\boldsymbol{\Sigma}}\); crisis periods inflate covariance estimates if included, and omitting them can understate tail risk. This project uses the common sample 2013-06-01 to 2026-04-01 (155 monthly rows) defined by the data manifest and bounded by BNDX's inception date. Alternative windows would shift GMVP and frontier locations; such sensitivity analysis is standard in portfolio management coursework but is deferred to future work.
+
 ### 3.6 Data quality checks
 
 Practical pipelines validate: monotonic dates (allowing corporate actions adjustments if applicable), absence of duplicated rows, plausible NAV ranges, and synchronized calendars across tickers. Missing months should be imputed or excluded consistently in both Excel and Python; inconsistent treatment is a frequent reconciliation failure mode.
@@ -195,35 +197,70 @@ One fund in the universe — Fidelity Funds - Global Healthcare Fund A-ACC-USD �
 
 ---
 
-## 4. Excel Model Architecture and Results
+## 4. Implementation Pipeline
 
-### 4.1 Workbook structure
+This section documents the sequence of engineering steps taken to build the platform, from raw market data through to the user-facing portfolio recommendation. The ordering reflects the data dependency chain: each step consumes the output of the previous one.
 
-The Excel audit model organizes data and calculations into sheets: `NAV_Data`, `Log_Returns`, `Cov_Matrix`, `GMVP`, and `Frontier`, with an export area for CSVs that feed reconciliation. Named ranges reduce formula errors; the inverse of the covariance matrix feeds the GMVP numerator and denominator using `MMULT`, `MINVERSE`, and `TRANSPOSE` patterns consistent with the PRD.
+### 4.1 Fund universe and data acquisition
 
-### 4.2 GMVP replication
+Ten FSMOne mutual funds were selected to span the major asset classes and geographic regions required by the PRD (global equity, regional equity, emerging markets, real estate, multi-asset, global and EM fixed-income). Because FSMOne does not publish ten-year historical NAV data through any public API and most of the selected share classes have insufficient history to support a ~13-year mean-variance estimate (the aligned window is 155 monthly rows, approximately 12 years 10 months, limited by BNDX's 2013-06-01 inception) in their own right, a liquid US-listed ETF was identified as a proxy for each fund. The ETF price series drives the covariance matrix and mean return vector; the FSMOne fund identifiers drive all user-facing display and the final portfolio allocation the user would execute. This two-layer architecture is exposed explicitly in the API and in the UI via a methodology tooltip.
 
-The workbook computes \(\mathbf{w}_{\mathrm{GMVP}}\) via the closed form and checks that weights sum to unity. A determinant check (`MDETERM`) confirms numerical invertibility. Small determinants trigger investigation: near-singular covariances arise if series are linearly dependent or if a column is accidentally duplicated.
+ETF monthly adjusted-close NAV data was downloaded via the `yfinance` library through `scripts/download_yfinance_data.py`. The aligned window 2013-06-01 to 2026-04-01 (155 monthly rows) was chosen because BNDX (PIMCO Global Bond proxy) is the binding constraint at 155 rows of history; every other ticker in the universe has at least this depth.
 
-### 4.3 Frontier tracing in Excel
+### 4.2 Return series and moment estimation
 
-Excel Solver minimizes variance for each target return subject to the same constraints as the Python implementation. The Python engine emits 100-point frontiers for both the long-only and short-allowed regimes; the Excel audit model should match this point count for both regimes to enable direct row-by-row reconciliation, avoiding the need for interpolation between grids. The principle of reconciliation remains: given the same \(\boldsymbol{\mu}\), the same \(\boldsymbol{\Sigma}\), the same target-return grid, and the same bound constraints, the two implementations must agree within an absolute tolerance of \(10^{-6}\) on weights, expected returns, volatilities, and Sharpe ratios. Where the implementations differ — Excel using the GRG Nonlinear engine of its Solver add-in, Python using SciPy's SLSQP — minor numerical disagreement at the seventh decimal place and beyond is expected and tolerated; disagreement above \(10^{-6}\) indicates a genuine methodological or implementation discrepancy requiring investigation.
+For each ETF proxy, continuously-compounded monthly log returns were computed as \(r_t = \ln(\mathrm{NAV}_t / \mathrm{NAV}_{t-1})\), yielding 154 log-return observations per asset. Annualized moments were computed as
 
-### 4.4 Pedagogical value
+\[
+\boldsymbol{\mu}_{\mathrm{annual}} = \mathrm{mean}(\mathbf{r}_{\log}) \times 12
+\]
+\[
+\boldsymbol{\Sigma}_{\mathrm{annual}} = \mathrm{cov}(\mathbf{r}_{\log},\,\mathrm{ddof}=1) \times 12
+\]
 
-Excel forces students to see matrix dimensions. That visibility prevents subtle broadcasting bugs common in code. However, Excel is fragile at scale; hence Python for production speed and testing. The dual implementation is the pedagogical point.
+These computations are implemented identically in Python (`backend/data_pipeline.py` using NumPy) and in Excel (`NAV_Data` → `Log_Returns` → `Cov_Matrix` sheets, using `LN`, `AVERAGE`, `_xlfn.COVARIANCE.S`). The two implementations reconcile at \(\sim 10^{-9}\) for the mean vector and covariance matrix — effectively machine precision.
 
-### 4.5 Solver settings and numerical hygiene
+### 4.3 Global minimum-variance portfolio
 
-Excel Solver is sensitive to starting values and constraint scaling. It is good practice to normalize units so that objective and constraints are \(\mathcal{O}(1)\), avoiding artificial ill-conditioning. For variance minimization, the quadratic form is convex on the feasible simplex; uniqueness is not guaranteed if multiple portfolios share nearly identical variance, but ties are rare with empirical \(\boldsymbol{\Sigma}\). Documenting Solver engine choice (GRG Nonlinear vs. evolutionary methods) matters for reproducibility across Excel versions.
+Before any GMVP computation proceeds, the workbook validates that \(\boldsymbol{\Sigma}\) is numerically invertible. The `Cov_Matrix` sheet exposes a determinant check via `MDETERM` in its validation cell B19; a small determinant triggers investigation, because near-singular covariances arise if return series are linearly dependent or a column is accidentally duplicated. On the project dataset \(\det(\boldsymbol{\Sigma}) \approx 6.75 \times 10^{-26}\) with condition number \(\kappa(\boldsymbol{\Sigma}) \approx 1.28 \times 10^{3}\) — small in magnitude but comfortably within stable inversion range.
 
-### 4.6 Export discipline
+The GMVP is then computed in three variants:
 
-CSV exports should preserve full double precision where possible, use consistent delimiters, and avoid thousands separators inside numeric fields. UTF-8 encoding prevents silent corruption of fund identifiers. Version the Excel file in Git LFS or an artifact store with timestamps referenced in reconciliation metadata, as required by the PRD’s reporting appendix.
+- **Closed-form unconstrained** (textbook Markowitz): \(\mathbf{w}^* = \boldsymbol{\Sigma}^{-1}\mathbf{1} / (\mathbf{1}^\top \boldsymbol{\Sigma}^{-1} \mathbf{1})\). Implemented in the Excel `GMVP` sheet via `MMULT(MINVERSE(varcov), ones)` divided by the sum. On the project dataset, this produces short positions in URTH, VNQ, QQQ, and VT — the mathematically correct unconstrained solution.
 
-### 4.7 Sensitivity to covariance estimation window
+- **Long-only constrained** (bounded \(0 \le w_i \le 0.4,\ \sum_i w_i = 1\)): computed in Python via SciPy SLSQP; cross-verified in Excel by running Solver on the `Optimal` sheet at \(A = 1000\), where utility maximization degenerates to variance minimization. The two implementations agree at \(10^{-4}\).
 
-Rolling windows and expanding windows produce different \(\hat{\boldsymbol{\Sigma}}\). Crisis periods inflate covariance estimates if included; omitting them can understate tail risk. The academic report should note which window the project uses (here, the common sample from `data_start_date` to `data_end_date` in the manifest) and that alternative windows would shift GMVP and frontier locations. Such sensitivity analysis is standard in portfolio management coursework.
+- **Short-allowed constrained** (bounded \(-1 \le w_i \le 2\)): for this dataset, the closed-form weights fall within the bounds, so the constrained solution equals the closed-form. The Python implementation exploits this to return the closed-form directly, eliminating SLSQP numerical residuals.
+
+### 4.4 Efficient frontier sweep
+
+Two frontiers are swept, each at 100 points: long-only with a 40% per-asset cap, and short-allowed with bounds \([-1, 2]\). At each target return, Solver (in Excel) and SLSQP (in Python) solve the variance-minimization subproblem
+
+\[
+\min_{\mathbf{w}}\ \mathbf{w}^\top \boldsymbol{\Sigma}\, \mathbf{w}
+\quad \text{subject to} \quad
+\mathbf{1}^\top \mathbf{w} = 1,\ \boldsymbol{\mu}^\top \mathbf{w} \ge r_{\text{target}},\ \mathbf{w} \in [\text{bounds}]
+\]
+
+GRG Nonlinear is selected over LP Simplex or Evolutionary engines because the objective (portfolio variance) is smooth, convex, and gradient-accessible — a natural fit for gradient-following methods on a bounded simplex.
+
+Excel uses a VBA macro (`GenerateFrontier` and `GenerateFrontierShort` in `Module1`) that iterates the Solver call across all 100 rows, resetting weights to an equal-weight starting point each iteration and activating the `Optimal` sheet before Solver calls to ensure same-sheet cell references. The inequality target-return constraint (\(\boldsymbol{\mu}^\top \mathbf{w} \ge r_{\text{target}}\)) rather than equality stabilizes Solver's search on the constrained surface; both formulations are mathematically equivalent at the variance-minimizing optimum.
+
+### 4.5 Risk assessment and utility maximization
+
+A five-dimension psychographic questionnaire (investment horizon, drawdown tolerance, loss reaction, income stability, prior experience) produces integer dimension scores that combine via arithmetic mean into a composite \(C \in [1, 5]\). The composite maps to a risk aversion coefficient \(A\) through the linear transformation \(A = \mathrm{clamp}(10.5 - 2.375\,C,\ 0.5,\ 10.0)\), developed and justified in §5.
+
+Given \(A\), the Python optimizer maximizes mean-variance utility \(U = E(r) - 0.5\,A\,\sigma^2\) subject to the same long-only 40%-cap constraints, via SciPy SLSQP. The Excel `Optimal` sheet replicates this via Solver at five reference \(A\) values \(\{0.5, 2.0, 3.5, 6.0, 10.0\}\); Python and Excel agree at machine precision (\(\sim 10^{-16}\)) for \(A \in \{0.5, 2.0, 3.5\}\), at \(\sim 10^{-7}\) for \(A = 10.0\), and at \(\sim 10^{-4}\) for \(A = 6.0\), where the two solvers converge to the same utility optimum via slightly different paths through the feasible region. The wider \(A = 6.0\) tolerance is documented in §8.
+
+### 4.6 Platform delivery
+
+The Python optimization stack is wrapped in a FastAPI service (`backend/main.py`) exposing two endpoints: `GET /api/v1/funds` returns fund metadata with FSMOne identifiers and ETF proxy information; `POST /api/v1/optimize` accepts a user's \(A\) value and returns the full portfolio allocation (GMVP, optimal, tangency, frontier points, both bound regimes). A React/Next.js frontend consumes this API and renders the chatbot questionnaire, risk profile card, dual-frontier chart with the 10 fund scatter dots, and the portfolio allocation donut.
+
+### 4.7 Reconciliation harness
+
+An independent reconciliation harness (`reconcile.py`) loads both the Python `/optimize` response and the Excel workbook's computed values, comparing every corresponding quantity at an absolute tolerance of \(10^{-6}\) (with two documented exceptions for matrix-inversion precision and cross-algorithm convergence noise, discussed in §8). This produces a reconciliation report (`reports/reconciliation_report.{md,json,pdf}`) that acts as the project's audit ledger. Every reconciliation row is a cross-implementation check: if Python and Excel agree, the claim is independently validated; if they disagree, the disagreement is recorded and explained.
+
+The current reconciliation state is 28 PASS / 3 FAIL / 1 SKIP of 32 total checks, discussed in §8.
 
 ---
 
