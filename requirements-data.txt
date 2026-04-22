@@ -1,6 +1,7 @@
-# Data pipeline + Yahoo download
+# Data pipeline + Yahoo download + Excel workbook populate
 # pip install -r requirements-data.txt
 numpy>=1.26
 pandas>=2.2
 scipy>=1.13
 yfinance>=0.2.40
+openpyxl>=3.1
