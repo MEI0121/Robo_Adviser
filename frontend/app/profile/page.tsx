@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/useAppStore";
 import { runOptimization } from "@/lib/api";
 import { DEFAULT_OPTIMIZE_CONSTRAINTS } from "@/lib/optimizationDefaults";
 import type { ProfileLabel } from "@/types";
+import { AMappingCard } from "@/components/profile/AMappingCard";
 
 // Per-profile visual config
 const PROFILE_CONFIG: Record<
@@ -203,6 +204,12 @@ export default function ProfilePage() {
             <span>10.0 — Conservative</span>
           </div>
         </div>
+
+        {/* A-mapping formula card */}
+        <AMappingCard
+          composite_score={riskProfile.composite_score}
+          risk_aversion_coefficient={A}
+        />
 
         {/* Error */}
         {optError && (
