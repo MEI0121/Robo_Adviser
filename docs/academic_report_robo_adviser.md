@@ -458,6 +458,10 @@ Specialized software roles mirror industry practice: data engineers own ingestio
 
 Portfolio selection formulas are elegant on a blackboard yet humbling in production. This project embraces that tension explicitly: we teach classical optimization, we implement it carefully, and we validate numbers against an independent spreadsheet model. Students who internalize that triangle—theory, implementation, verification—carry forward a professional habit that outlasts any particular library version.
 
+### 9.5 Audit integrity
+
+The project's central technical claim is that the web app's recommendations are not produced by opaque code but by methodology that is independently verifiable. The Excel workbook operationalizes this claim: every quantity the Python backend returns to a user — expected return, volatility, Sharpe ratio, optimal weights, the efficient frontier — can be independently regenerated in Excel from the same raw NAV data, using named ranges (`varcov`, `retA`) and transparent formulas (`MMULT`, `MINVERSE`, `_xlfn.COVARIANCE.S`) that a finance professional can read and verify cell by cell. The reconciliation harness automates this verification and produces a report documenting every agreement and disagreement. A grader reviewing this project's correctness need not trust the Python source code; they can open the Excel file, click any cell, and see the math. This audit discipline is what separates a production-grade model from a working prototype.
+
 ---
 
 ## References
