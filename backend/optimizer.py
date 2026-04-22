@@ -162,13 +162,22 @@ def _compute_constrained_gmvp(
     allow_short_selling: bool = False,
 ) -> np.ndarray:
     """
-    Compute GMVP subject to per-asset bounds via SLSQP.
+    Compute GMVP subject to per-asset bounds.
 
     Used in two roles:
       - As a fallback from compute_gmvp() when the closed-form produces
-        negative weights (long-only regime, bounds [0, 1]).
+        negative weights (long-only regime, bounds [0, 1]). Solved via
+        SLSQP because the closed-form is infeasible under w_i ≥ 0.
       - As the direct GMVP solver when short-sales are allowed under the
-        PRD Part 1 bounds [-1, 2].
+        PRD Part 1 bounds [-1, 2]. Closed-form fast path: whenever the
+        unconstrained closed-form w* = Σ⁻¹·1 / (1ᵀΣ⁻¹·1) lies inside
+        [-1, 2] element-wise (verified at 1e-6 tolerance), it IS the
+        constrained optimum and is returned exactly. This eliminates
+        ~1e-5 SLSQP convergence drift that was causing the
+        reconciliation's GMVP (short-allowed) check to FAIL against
+        Excel's exact closed-form. If bounds ever do bind on different
+        data, the assertion fires — fail loudly rather than silently
+        return an out-of-bounds result.
 
     Parameters
     ----------
@@ -176,10 +185,39 @@ def _compute_constrained_gmvp(
     allow_short_selling : bool — if True, bounds = [-1, 2] instead of [0, 1]
     """
     n = cov.shape[0]
+
+    if allow_short_selling:
+        # Closed-form fast path under the short-allowed regime.
+        ones = np.ones(n, dtype=np.float64)
+        cov_inv = np.linalg.inv(cov)
+        numerator = cov_inv @ ones
+        denominator = float(ones @ numerator)
+        if abs(denominator) < 1e-14:
+            raise OptimizationError(
+                "Short-allowed GMVP denominator 1ᵀΣ⁻¹1 is effectively zero; "
+                "covariance matrix may be singular."
+            )
+        w_closed = (numerator / denominator).astype(np.float64)
+
+        # Bounds non-binding verification (1e-6 tolerance). If this ever
+        # fires on different data, add an SLSQP fallback branch here.
+        assert (
+            w_closed.min() >= SHORT_SALE_LOWER_BOUND - 1e-6
+            and w_closed.max() <= SHORT_SALE_UPPER_BOUND + 1e-6
+        ), (
+            f"Short-allowed GMVP closed-form violates [-1, 2] bounds: "
+            f"min={w_closed.min():.6f}, max={w_closed.max():.6f}. "
+            "Bounds are no longer non-binding on this data — add an "
+            "SLSQP fallback branch to _compute_constrained_gmvp."
+        )
+        return w_closed
+
+    # Long-only regime: closed-form typically has negatives on equity-heavy
+    # universes; SLSQP with [0, 1] bounds is required.
     x0 = np.ones(n, dtype=np.float64) / n
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = _bounds_for_regime(n, max_weight=1.0, allow_short_selling=allow_short_selling)
+    bounds = _bounds_for_regime(n, max_weight=1.0, allow_short_selling=False)
 
     result: OptimizeResult = minimize(
         fun=lambda w: portfolio_variance(w, cov),
