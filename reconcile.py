@@ -31,6 +31,20 @@ Outputs:
   /reports/reconciliation_report.md    — human-readable Markdown report
   /reports/reconciliation_report.pdf   — PDF audit summary (PRD QA)
 
+Reconciliation source priority (per check):
+  1. Group_BMD5302_Robo.xlsm or .xlsx at the repo root (preferred). The
+     workbook must have been opened in Excel at least once so that
+     formula cells have cached values (``data_only=True`` reads cached
+     values, not formula strings). See read_excel_reconciliation_data.
+  2. CSV file under data/reconciliation/ (fallback, per-check). Covers
+     two cases: (a) no workbook at repo root yet, (b) workbook present
+     but specific sheets not populated.
+  3. SKIP, if neither is available.
+
+  The Optimal sheet holds only one A value at a time, so the five
+  A-value reconciliations remain CSV-driven (excel_optimal_A{VALUE}.csv)
+  regardless of whether the workbook is present.
+
 Usage:
   # Direct Python invocation (backend must be importable)
   python reconcile.py
@@ -311,6 +325,233 @@ def _require_excel_csv(path: Path, label: str) -> np.ndarray | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Excel workbook reader (preferred source; CSV is fallback)
+# ---------------------------------------------------------------------------
+#
+# When the team's Group_BMD5302_Robo.xls{m,x} workbook is populated, opened
+# in Excel to evaluate formulas, and saved at the repo root, reconcile.py
+# reads every reconciliation value directly from known cell locations —
+# no more 9 × Save-As-CSV. The per-check ``_require_reconciliation_source``
+# helper below prefers workbook data and falls back to the existing CSV
+# path row-by-row (so a half-populated workbook still works: populated
+# rows come from the workbook, missing rows fall back to CSV or SKIP).
+#
+# A few workbook-level notes worth pinning so the cell map doesn't drift:
+#   * The canonical workbook sheet list is 12 sheets (README, NAV_Data,
+#     Log_Returns, Cov_Matrix, GMVP, Optimal, Frontier, Frontier_Chart,
+#     Equal_Weight, Tangency, GMVP_Short, Frontier_Short). Changes to
+#     this list require updating the cell map below.
+#   * Cached formula values in an xlsx are ONLY populated after Excel
+#     has opened and re-saved the workbook. A freshly-built openpyxl
+#     workbook reads as empty via data_only=True even if every cell is
+#     a valid formula. The reader returns None for empty cells; the
+#     caller then falls back to CSV.
+#   * The Optimal sheet holds only one A value at a time (B3). Per the
+#     task spec, the five A-value reconciliations remain CSV-driven
+#     (the user saves excel_optimal_A{VALUE}.csv after each Solver run).
+
+# Filename candidates at the repo root, in preference order.
+_WORKBOOK_CANDIDATES = (
+    "Group_BMD5302_Robo.xlsm",   # macro-enabled, final state
+    "Group_BMD5302_Robo.xlsx",   # template / pre-macro state
+)
+
+# Cell map per reconciliation key. Each entry describes what to read and
+# how to reshape the result.
+#   "sheet": Excel sheet name
+#   "range": A1-notation range; "A1:K1" → 1×11, etc.
+#   "shape": "row" / "col" / "matrix" / "col_weights+stats" — controls
+#            post-read reshaping
+#   "keys":  when shape is "col_weights+stats", names the two output keys
+#            derived from splitting the first 10 rows (weights) from the
+#            remaining rows (stats).
+_RECONCILIATION_CELL_MAP: list[dict] = [
+    # mu vector (retA named range, also addressable as Cov_Matrix!B15:K15)
+    {"key": "mu",  "sheet": "Cov_Matrix", "range": "B15:K15", "shape": "row"},
+    # covariance matrix (varcov named range, also Cov_Matrix!B2:K11)
+    {"key": "cov", "sheet": "Cov_Matrix", "range": "B2:K11",  "shape": "matrix"},
+    # GMVP long-only reconciliation export block (rows 27-39): 10 weights then E[r], vol, Sharpe
+    {
+        "key": ("gmvp_weights", "gmvp_stats"),
+        "sheet": "GMVP", "range": "B27:B39", "shape": "col_weights+stats",
+    },
+    # GMVP short-allowed (rows 30-42)
+    {
+        "key": ("gmvp_short_weights", "gmvp_short_stats"),
+        "sheet": "GMVP_Short", "range": "B30:B42", "shape": "col_weights+stats",
+    },
+    # Equal-weight (rows 27-39)
+    {
+        "key": ("equal_weight_weights", "equal_weight_stats"),
+        "sheet": "Equal_Weight", "range": "B27:B39", "shape": "col_weights+stats",
+    },
+    # Tangency long-only (rows 48-60)
+    {
+        "key": ("tangency_weights", "tangency_stats"),
+        "sheet": "Tangency", "range": "B48:B60", "shape": "col_weights+stats",
+    },
+    # Long-only frontier: 100 rows × 13 cols (target_return, vol, sharpe, w0..w9)
+    {"key": "frontier",       "sheet": "Frontier",       "range": "B4:N103",  "shape": "matrix"},
+    # Short-allowed frontier: header at row 4 → data rows 5-104
+    {"key": "frontier_short", "sheet": "Frontier_Short", "range": "B5:N104", "shape": "matrix"},
+]
+
+
+def _find_excel_workbook(project_root: Path) -> Path | None:
+    """Locate the audit workbook at the repo root. Returns None if absent."""
+    for name in _WORKBOOK_CANDIDATES:
+        path = project_root / name
+        if path.exists():
+            return path
+    return None
+
+
+def _cells_to_array(cells: tuple, shape: str) -> np.ndarray | None:
+    """
+    Convert a tuple-of-tuples from openpyxl's ``ws[range]`` into a typed
+    numpy array, honouring the reshape hint. Returns None if ANY cell in
+    the range is empty (None) — the caller treats that as "not populated;
+    fall back to CSV".
+
+    Defensive against three forms of "empty":
+      - Empty outer tuple (``ws[range]`` on a read-only empty sheet)
+      - Inner tuples of length 0
+      - Any cell with .value == None
+    """
+    # Empty outer or empty first row → treat as "no data"
+    if not cells:
+        return None
+    if not cells[0]:
+        return None
+
+    # Flatten to a list, check for any None
+    flat: list = []
+    for row in cells:
+        for cell in row:
+            if cell.value is None:
+                return None
+            flat.append(cell.value)
+
+    if not flat:
+        return None
+
+    try:
+        if shape in ("row", "col"):
+            arr = np.asarray(flat, dtype=np.float64).reshape(-1)
+        elif shape == "matrix":
+            n_rows = len(cells)
+            n_cols = len(cells[0])
+            arr = np.asarray(flat, dtype=np.float64).reshape(n_rows, n_cols)
+        else:
+            arr = np.asarray(flat, dtype=np.float64)
+    except (TypeError, ValueError):
+        # Non-numeric content in the range (e.g., a formula error string)
+        return None
+    return arr
+
+
+def read_excel_reconciliation_data(workbook_path: Path) -> dict:
+    """
+    Read every reconciliation value from the Excel workbook.
+
+    Returns a dict whose keys are the reconciliation-source labels used
+    by the per-check ``_require_reconciliation_source`` helper. Each
+    value is either a numpy array or None.
+
+    A None value for a key means "those cells in the workbook are empty
+    or contain uncached formulas" — the caller should fall back to the
+    corresponding CSV file for that specific check. This supports the
+    half-populated-workbook case: any rows the user has evaluated and
+    saved are used from the workbook; rows that are still empty fall
+    back to CSV (or SKIP).
+
+    The workbook is read with ``data_only=True`` so cached formula
+    values are returned rather than the formula strings themselves. If
+    the workbook has never been opened in Microsoft Excel, every cached
+    value is None and every key in the returned dict will be None,
+    which gracefully degrades to the existing CSV-based flow.
+    """
+    # Heavy import — only pulled in when a workbook is actually present.
+    from openpyxl import load_workbook  # noqa: PLC0415
+
+    out: dict = {}
+
+    try:
+        wb = load_workbook(workbook_path, data_only=True, read_only=True)
+    except Exception as exc:  # noqa: BLE001 — malformed workbook is non-fatal
+        _log(_FAIL, "Excel workbook load", f"{workbook_path.name}: {exc}")
+        # Return all-None so caller drops through to CSV for every check.
+        for entry in _RECONCILIATION_CELL_MAP:
+            key = entry["key"]
+            if isinstance(key, tuple):
+                for k in key:
+                    out[k] = None
+            else:
+                out[key] = None
+        return out
+
+    for entry in _RECONCILIATION_CELL_MAP:
+        sheet_name = entry["sheet"]
+        if sheet_name not in wb.sheetnames:
+            # Missing sheet — mark the keys as None and continue
+            key = entry["key"]
+            if isinstance(key, tuple):
+                for k in key:
+                    out[k] = None
+            else:
+                out[key] = None
+            continue
+
+        ws = wb[sheet_name]
+        try:
+            cells = ws[entry["range"]]
+        except Exception:  # noqa: BLE001 — bad range, treat as missing
+            cells = None
+
+        arr = _cells_to_array(cells, entry["shape"]) if cells is not None else None
+
+        key = entry["key"]
+        if entry["shape"] == "col_weights+stats":
+            # First 10 rows are weights, remaining are stats.
+            if arr is None or arr.shape[0] < 13:
+                out[key[0]] = None
+                out[key[1]] = None
+            else:
+                out[key[0]] = arr[:10]
+                out[key[1]] = arr[10:]
+        else:
+            out[key] = arr
+
+    return out
+
+
+def _require_reconciliation_source(
+    csv_path: Path,
+    label: str,
+    *,
+    workbook_data: dict | None = None,
+    workbook_key: str | None = None,
+) -> np.ndarray | None:
+    """
+    Unified lookup: prefer the workbook value for this check, fall back
+    to CSV if the workbook didn't supply it, SKIP if neither is present.
+
+    The workbook is the primary audit source when populated. CSV stays
+    the fallback for two cases: (1) the workbook isn't at the repo root
+    yet, (2) the user has populated some sheets but not others. Each
+    reconciliation check makes its own independent decision so a
+    half-populated workbook works correctly.
+    """
+    if workbook_data is not None and workbook_key is not None:
+        arr = workbook_data.get(workbook_key)
+        if arr is not None:
+            _log(_INFO, label, "source: Excel workbook")
+            return np.asarray(arr, dtype=np.float64)
+
+    return _require_excel_csv(csv_path, label)
+
+
 def _load_excel_optimal_weights(
     excel_dir: Path,
     A: float,
@@ -410,30 +651,43 @@ def run_phase1(
     cov: np.ndarray,
     w_gmvp: np.ndarray,
     excel_dir: Path,
+    workbook_data: dict | None = None,
 ) -> list[CheckResult]:
     """
     Compare mu vector, covariance matrix, and GMVP weights between the
     Python backend and Excel baseline exports.
+
+    When ``workbook_data`` is provided, each check prefers the workbook
+    value and falls back to the corresponding CSV if that key is empty.
     """
     _separator("Phase 1: Static Data Reconciliation")
     results: list[CheckResult] = []
 
     # μ vector (10 elements)
-    excel_mu_raw = _require_excel_csv(excel_dir / "excel_mu_vector.csv", "μ vector")
+    excel_mu_raw = _require_reconciliation_source(
+        excel_dir / "excel_mu_vector.csv", "μ vector",
+        workbook_data=workbook_data, workbook_key="mu",
+    )
     if excel_mu_raw is not None:
         results.append(reconcile_arrays(mu, excel_mu_raw.flatten(), "μ vector (10 elements)", TOL_MU))
     else:
         results.append(_make_skip("μ vector (10 elements)", TOL_MU))
 
     # Σ matrix (100 elements)
-    excel_cov_raw = _require_excel_csv(excel_dir / "excel_cov_matrix.csv", "Σ matrix")
+    excel_cov_raw = _require_reconciliation_source(
+        excel_dir / "excel_cov_matrix.csv", "Σ matrix",
+        workbook_data=workbook_data, workbook_key="cov",
+    )
     if excel_cov_raw is not None:
         results.append(reconcile_arrays(cov, excel_cov_raw, "Σ matrix (100 elements)", TOL_COV))
     else:
         results.append(_make_skip("Σ matrix (100 elements)", TOL_COV))
 
     # GMVP weights (10 elements)
-    excel_gmvp_raw = _require_excel_csv(excel_dir / "excel_gmvp_weights.csv", "GMVP weights")
+    excel_gmvp_raw = _require_reconciliation_source(
+        excel_dir / "excel_gmvp_weights.csv", "GMVP weights",
+        workbook_data=workbook_data, workbook_key="gmvp_weights",
+    )
     if excel_gmvp_raw is not None:
         results.append(reconcile_arrays(w_gmvp, excel_gmvp_raw.flatten(), "GMVP weights (10 elements)", TOL_GMVP))
     else:
@@ -525,35 +779,56 @@ def run_phase3_frontier(
     mu: np.ndarray,
     cov: np.ndarray,
     excel_dir: Path,
+    workbook_data: dict | None = None,
 ) -> list[CheckResult]:
     """
-    Compare the efficient frontier points (up to 50 points matching the Excel
-    model) between Python and Excel Solver.
+    Compare the efficient frontier points (up to 100 points matching the
+    Excel model) between Python and Excel Solver.
+
+    Source preference: workbook_data["frontier"] (when populated) ahead of
+    excel_dir/excel_frontier.csv. The workbook's frontier block is
+    Frontier!B4:N103 — 100 rows × 13 cols: [target_return, volatility,
+    sharpe, w0..w9]. We extract the w0..w9 slice for reconciliation.
     """
     _separator("Phase 3: Efficient Frontier Reconciliation")
     results: list[CheckResult] = []
 
-    excel_frontier_path = excel_dir / "excel_frontier.csv"
-    if not excel_frontier_path.exists():
-        _log(_SKIP, "Frontier reconciliation", "excel_frontier.csv not found")
-        results.append(_make_skip(
-            "Frontier weights (long-only, 100 points)",
-            TOL_FRONTIER,
-        ))
-        return results
+    excel_weights_matrix: np.ndarray | None = None
 
-    import pandas as pd  # noqa: PLC0415
+    # First preference: the workbook's frontier block
+    if workbook_data is not None:
+        arr = workbook_data.get("frontier")
+        if arr is not None and arr.ndim == 2 and arr.shape[1] >= 13:
+            # Columns: [target_return, volatility, sharpe, w0..w9]. Extract weights.
+            excel_weights_matrix = arr[:, 3:13].astype(np.float64)
+            _log(_INFO, "Frontier source", "Excel workbook (Frontier!B4:N103)")
 
-    df = pd.read_csv(excel_frontier_path)
+    # Fallback: CSV
+    if excel_weights_matrix is None:
+        excel_frontier_path = excel_dir / "excel_frontier.csv"
+        if not excel_frontier_path.exists():
+            _log(_SKIP, "Frontier reconciliation", "no workbook source and excel_frontier.csv not found")
+            results.append(_make_skip(
+                "Frontier weights (long-only, 100 points)",
+                TOL_FRONTIER,
+            ))
+            return results
 
-    # Expected columns: target_return, min_variance, w0, w1, ..., w9
-    weight_cols = [c for c in df.columns if c.startswith("w") or "weight" in c.lower()]
+        import pandas as pd  # noqa: PLC0415
 
-    if not weight_cols:
-        _log(_FAIL, "Frontier CSV parse", "No weight columns detected in excel_frontier.csv")
-        return results
+        df = pd.read_csv(excel_frontier_path)
 
-    n_excel_points = len(df)
+        # Expected columns: target_return, min_variance, w0, w1, ..., w9
+        weight_cols = [c for c in df.columns if c.startswith("w") or "weight" in c.lower()]
+
+        if not weight_cols:
+            _log(_FAIL, "Frontier CSV parse", "No weight columns detected in excel_frontier.csv")
+            return results
+
+        _log(_INFO, "Frontier source", f"CSV ({excel_frontier_path.name})")
+        excel_weights_matrix = df[weight_cols].values.astype(np.float64)
+
+    n_excel_points = len(excel_weights_matrix)
     _log(_INFO, "Excel frontier points", str(n_excel_points))
 
     # Generate matching Python frontier (same count as Excel)
@@ -563,7 +838,6 @@ def run_phase3_frontier(
         _log(_FAIL, "Python frontier computation", str(exc))
         return results
 
-    excel_weights_matrix = df[weight_cols].values.astype(np.float64)
     py_weights_matrix = np.array(py_frontier_weights, dtype=np.float64)
 
     if excel_weights_matrix.shape[1] != py_weights_matrix.shape[1]:
@@ -609,16 +883,17 @@ def run_phase3b_prd_part1(
     mu: np.ndarray,
     cov: np.ndarray,
     excel_dir: Path,
+    workbook_data: dict | None = None,
 ) -> list[CheckResult]:
     """
     Reconcile the artifacts introduced in Steps 1–3 of the PRD Part 1
     work: short-allowed GMVP, long-only tangency, short-allowed tangency,
     short-allowed efficient frontier, equal-weight benchmark.
 
-    All checks SKIP while the corresponding Excel CSVs are absent — the
-    Excel audit model for these artifacts is a separate task. They are
-    enumerated here so that the report makes the Excel coverage gap
-    explicit (rather than silently missing the rows entirely).
+    Source preference per check: workbook_data[...] (when populated)
+    ahead of the excel_dir CSV. Each check is independent — a partially
+    populated workbook (some sheets evaluated, others empty) falls back
+    to CSV on a per-row basis.
 
     Tangency rows additionally carry the Python solver_path
     ("primary" | "fallback") for provenance.
@@ -644,20 +919,17 @@ def run_phase3b_prd_part1(
     w_gmvp_s = _compute_constrained_gmvp(cov, allow_short_selling=True)
     _log(_INFO, "Py GMVP (short-allowed)", f"E[r]={_pr(w_gmvp_s, mu):.6f} σ={_pv(w_gmvp_s, cov):.6f}")
 
-    path = excel_dir / "excel_gmvp_short.csv"
-    if path.exists():
-        excel_w = _require_excel_csv(path, "GMVP (short-allowed) weights")
-        if excel_w is not None:
-            results.append(
-                reconcile_arrays(
-                    w_gmvp_s,
-                    excel_w.flatten(),
-                    "GMVP (short-allowed) weights",
-                    TOL_GMVP,
-                )
+    excel_w = _require_reconciliation_source(
+        excel_dir / "excel_gmvp_short.csv", "GMVP (short-allowed) weights",
+        workbook_data=workbook_data, workbook_key="gmvp_short_weights",
+    )
+    if excel_w is not None:
+        results.append(
+            reconcile_arrays(
+                w_gmvp_s, excel_w.flatten(),
+                "GMVP (short-allowed) weights", TOL_GMVP,
             )
-        else:
-            results.append(_make_skip("GMVP (short-allowed) weights", TOL_GMVP, "CSV unreadable"))
+        )
     else:
         results.append(_make_skip("GMVP (short-allowed) weights", TOL_GMVP))
 
@@ -671,23 +943,16 @@ def run_phase3b_prd_part1(
         f"Sharpe={tan_long.sharpe:.6f}  solver_path={tan_long.solver_path}",
     )
 
-    path = excel_dir / "excel_tangency.csv"
-    if path.exists():
-        excel_w = _require_excel_csv(path, "Tangency (long-only) weights")
-        if excel_w is not None:
-            r = reconcile_arrays(
-                tan_long.weights,
-                excel_w.flatten(),
-                "Tangency (long-only) weights",
-                TOL_OPTIMAL,
-            )
-            # Attach solver_path provenance
-            results.append(r._replace(solver_path=tan_long.solver_path))
-        else:
-            results.append(
-                _make_skip("Tangency (long-only) weights", TOL_OPTIMAL, "CSV unreadable")
-                ._replace(solver_path=tan_long.solver_path)
-            )
+    excel_w = _require_reconciliation_source(
+        excel_dir / "excel_tangency.csv", "Tangency (long-only) weights",
+        workbook_data=workbook_data, workbook_key="tangency_weights",
+    )
+    if excel_w is not None:
+        r = reconcile_arrays(
+            tan_long.weights, excel_w.flatten(),
+            "Tangency (long-only) weights", TOL_OPTIMAL,
+        )
+        results.append(r._replace(solver_path=tan_long.solver_path))
     else:
         results.append(
             _make_skip("Tangency (long-only) weights", TOL_OPTIMAL)
@@ -704,22 +969,18 @@ def run_phase3b_prd_part1(
         f"Sharpe={tan_short.sharpe:.6f}  solver_path={tan_short.solver_path}",
     )
 
-    path = excel_dir / "excel_tangency_short.csv"
-    if path.exists():
-        excel_w = _require_excel_csv(path, "Tangency (short-allowed) weights")
-        if excel_w is not None:
-            r = reconcile_arrays(
-                tan_short.weights,
-                excel_w.flatten(),
-                "Tangency (short-allowed) weights",
-                TOL_OPTIMAL,
-            )
-            results.append(r._replace(solver_path=tan_short.solver_path))
-        else:
-            results.append(
-                _make_skip("Tangency (short-allowed) weights", TOL_OPTIMAL, "CSV unreadable")
-                ._replace(solver_path=tan_short.solver_path)
-            )
+    # Short-allowed tangency is NOT in the current workbook sheet set
+    # (Tangency sheet is long-only only); CSV is the only source.
+    excel_w = _require_reconciliation_source(
+        excel_dir / "excel_tangency_short.csv", "Tangency (short-allowed) weights",
+        workbook_data=workbook_data, workbook_key="tangency_short_weights",
+    )
+    if excel_w is not None:
+        r = reconcile_arrays(
+            tan_short.weights, excel_w.flatten(),
+            "Tangency (short-allowed) weights", TOL_OPTIMAL,
+        )
+        results.append(r._replace(solver_path=tan_short.solver_path))
     else:
         results.append(
             _make_skip("Tangency (short-allowed) weights", TOL_OPTIMAL)
@@ -727,76 +988,96 @@ def run_phase3b_prd_part1(
         )
 
     # --- 4. Short-allowed efficient frontier (100 points) -----------------
-    path = excel_dir / "excel_frontier_short.csv"
-    if path.exists():
-        try:
-            import pandas as pd  # noqa: PLC0415
+    # Prefer workbook_data["frontier_short"] when populated; else CSV.
+    excel_mat: np.ndarray | None = None
+    n_expected = 100
 
-            df = pd.read_csv(path)
-            weight_cols = [c for c in df.columns if c.startswith("w") or "weight" in c.lower()]
-            if not weight_cols:
-                results.append(
-                    _make_skip(
-                        "Frontier weights (short-allowed, 100 points)",
-                        TOL_FRONTIER,
-                        "no weight columns detected",
+    if workbook_data is not None:
+        arr = workbook_data.get("frontier_short")
+        if arr is not None and arr.ndim == 2 and arr.shape[1] >= 13:
+            excel_mat = arr[:, 3:13].astype(np.float64)
+            _log(_INFO, "Short-allowed frontier source", "Excel workbook (Frontier_Short!B5:N104)")
+            n_expected = len(excel_mat)
+
+    if excel_mat is None:
+        path = excel_dir / "excel_frontier_short.csv"
+        if path.exists():
+            try:
+                import pandas as pd  # noqa: PLC0415
+
+                df = pd.read_csv(path)
+                weight_cols = [c for c in df.columns if c.startswith("w") or "weight" in c.lower()]
+                if not weight_cols:
+                    results.append(
+                        _make_skip(
+                            "Frontier weights (short-allowed, 100 points)",
+                            TOL_FRONTIER,
+                            "no weight columns detected",
+                        )
                     )
-                )
-            else:
-                py_frontier = compute_efficient_frontier(
-                    mu, cov, n_points=len(df), max_weight=1.0, allow_short_selling=True
-                )
-                py_mat = np.array([p.weights for p in py_frontier], dtype=np.float64)
-                excel_mat = df[weight_cols].values.astype(np.float64)
-                n_compare = min(len(excel_mat), len(py_mat))
-                max_devs = np.max(np.abs(excel_mat[:n_compare] - py_mat[:n_compare]), axis=1)
-                overall_max = float(max_devs.max())
-                passed = overall_max <= TOL_FRONTIER
-                _log(
-                    _PASS if passed else _FAIL,
-                    f"Short-allowed frontier weights ({n_compare} × 10)",
-                    f"max deviation = {overall_max:.2e}  (tol={TOL_FRONTIER:.0e})",
-                )
+                    excel_mat = None
+                    n_expected = 0
+                else:
+                    excel_mat = df[weight_cols].values.astype(np.float64)
+                    n_expected = len(excel_mat)
+                    _log(_INFO, "Short-allowed frontier source", f"CSV ({path.name})")
+            except Exception as exc:  # noqa: BLE001
+                _log(_FAIL, "Short-allowed frontier CSV parse", str(exc))
                 results.append(CheckResult(
-                    label=f"Frontier weights (short-allowed, {n_compare} points)",
-                    status="pass" if passed else "fail",
-                    max_deviation=overall_max,
+                    label="Frontier weights (short-allowed)",
+                    status="fail",
+                    max_deviation=float("inf"),
                     tolerance=TOL_FRONTIER,
-                    details=f"Worst frontier point index: {int(np.argmax(max_devs))}",
+                    details=str(exc),
                 ))
-        except Exception as exc:  # noqa: BLE001
-            _log(_FAIL, "Short-allowed frontier CSV parse", str(exc))
-            results.append(CheckResult(
-                label="Frontier weights (short-allowed)",
-                status="fail",
-                max_deviation=float("inf"),
-                tolerance=TOL_FRONTIER,
-                details=str(exc),
-            ))
+                excel_mat = None
+                n_expected = 0
+
+    if excel_mat is not None and n_expected > 0:
+        py_frontier = compute_efficient_frontier(
+            mu, cov, n_points=n_expected, max_weight=1.0, allow_short_selling=True
+        )
+        py_mat = np.array([p.weights for p in py_frontier], dtype=np.float64)
+        n_compare = min(len(excel_mat), len(py_mat))
+        max_devs = np.max(np.abs(excel_mat[:n_compare] - py_mat[:n_compare]), axis=1)
+        overall_max = float(max_devs.max())
+        passed = overall_max <= TOL_FRONTIER
+        _log(
+            _PASS if passed else _FAIL,
+            f"Short-allowed frontier weights ({n_compare} × 10)",
+            f"max deviation = {overall_max:.2e}  (tol={TOL_FRONTIER:.0e})",
+        )
+        results.append(CheckResult(
+            label=f"Frontier weights (short-allowed, {n_compare} points)",
+            status="pass" if passed else "fail",
+            max_deviation=overall_max,
+            tolerance=TOL_FRONTIER,
+            details=f"Worst frontier point index: {int(np.argmax(max_devs))}",
+        ))
+    elif excel_mat is None and n_expected == 0:
+        # Already appended a skip/fail above; skip the default append
+        pass
     else:
         results.append(_make_skip(
             "Frontier weights (short-allowed, 100 points)", TOL_FRONTIER
         ))
 
     # --- 5. Equal-weight benchmark ----------------------------------------
+    # The workbook's Equal_Weight sheet exposes weights (all 0.1) + stats.
+    # The reconciliation check compares only the 3 stats (E[r], σ, Sharpe).
     ew = compute_equal_weight_portfolio(mu, cov)
-    path = excel_dir / "excel_equal_weight.csv"
-    if path.exists():
-        excel_w = _require_excel_csv(path, "Equal-weight stats")
-        if excel_w is not None:
-            # Excel CSV for equal-weight is expected to carry the three
-            # stats (E[r], σ, Sharpe) in a single column.
-            ref = excel_w.flatten()
-            py_vec = np.array([ew.expected_return, ew.volatility, ew.sharpe])
-            n_take = min(len(ref), 3)
-            results.append(reconcile_arrays(
-                py_vec[:n_take],
-                ref[:n_take],
-                "Equal-weight (E[r], σ, Sharpe)",
-                TOL_RETURN,
-            ))
-        else:
-            results.append(_make_skip("Equal-weight (E[r], σ, Sharpe)", TOL_RETURN, "CSV unreadable"))
+    excel_w = _require_reconciliation_source(
+        excel_dir / "excel_equal_weight.csv", "Equal-weight stats",
+        workbook_data=workbook_data, workbook_key="equal_weight_stats",
+    )
+    if excel_w is not None:
+        ref = excel_w.flatten()
+        py_vec = np.array([ew.expected_return, ew.volatility, ew.sharpe])
+        n_take = min(len(ref), 3)
+        results.append(reconcile_arrays(
+            py_vec[:n_take], ref[:n_take],
+            "Equal-weight (E[r], σ, Sharpe)", TOL_RETURN,
+        ))
     else:
         results.append(_make_skip("Equal-weight (E[r], σ, Sharpe)", TOL_RETURN))
 
@@ -1158,6 +1439,25 @@ def run_reconciliation(excel_dir: Path | None = None) -> dict:
     print(f"{_INFO} Git commit SHA  : {_get_git_sha()}")
     print(f"{_INFO} Excel dir       : {excel_dir}")
     print(f"{_INFO} Excel version   : {_get_excel_version(excel_dir)}")
+
+    # --- Load Excel workbook (preferred source; CSV is fallback) -----------
+    workbook_path = _find_excel_workbook(_PROJECT_ROOT)
+    workbook_data: dict | None = None
+    if workbook_path is not None:
+        print(f"{_INFO} Excel workbook  : {workbook_path.name}")
+        workbook_data = read_excel_reconciliation_data(workbook_path)
+        populated_keys = sorted(
+            k for k, v in workbook_data.items() if v is not None
+        )
+        if populated_keys:
+            print(f"{_INFO} Workbook cache  : {len(populated_keys)} keys populated  "
+                  f"({', '.join(populated_keys[:6])}{'…' if len(populated_keys) > 6 else ''})")
+        else:
+            print(f"{_INFO} Workbook cache  : empty  "
+                  "(open in Excel + save to evaluate formulas; falling back to CSVs)")
+    else:
+        print(f"{_INFO} Excel workbook  : (not found at repo root; CSV-only mode)")
+
     _separator()
 
     # --- Load Python backend data -------------------------------------------
@@ -1184,16 +1484,17 @@ def run_reconciliation(excel_dir: Path | None = None) -> dict:
 
     # --- Phase 1 ------------------------------------------------------------
     results: list[CheckResult] = []
-    results.extend(run_phase1(mu, cov, w_gmvp, excel_dir))
+    results.extend(run_phase1(mu, cov, w_gmvp, excel_dir, workbook_data=workbook_data))
 
     # --- Phase 2 ------------------------------------------------------------
+    # Optimal sheet holds one A value at a time; per spec, stays CSV-driven.
     results.extend(run_phase2(mu, cov, excel_dir))
 
     # --- Phase 3: Frontier --------------------------------------------------
-    results.extend(run_phase3_frontier(mu, cov, excel_dir))
+    results.extend(run_phase3_frontier(mu, cov, excel_dir, workbook_data=workbook_data))
 
     # --- Phase 3b: PRD Part 1 additions -------------------------------------
-    results.extend(run_phase3b_prd_part1(mu, cov, excel_dir))
+    results.extend(run_phase3b_prd_part1(mu, cov, excel_dir, workbook_data=workbook_data))
 
     # --- Summary ------------------------------------------------------------
     elapsed = time.monotonic() - t_start
