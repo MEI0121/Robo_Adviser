@@ -1,7 +1,12 @@
 [
   {
-    "fund_code": "FSMONE_AB_GLOBAL_GROWTH",
+    "fund_code": "ACM177",
     "fund_name": "AB SICAV I Global Growth Portfolio AX USD",
+    "isin": null,
+    "fund_house": "AllianceBernstein (Singapore) Ltd. (\"ABSL\")",
+    "launch_date": "2026-02-27",
+    "fsmone_risk_rating": 7,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/ACM177/AB-SICAV-I-Global-Growth-Portfolio-AX-USD",
     "proxy_ticker": "URTH",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Global",
@@ -11,8 +16,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_BLACKROCK_GLOBAL_ALLOC",
+    "fund_code": "BGF002",
     "fund_name": "Blackrock Global Allocation A2 USD",
+    "isin": "LU0072462426",
+    "fund_house": "BlackRock (Singapore) Limited",
+    "launch_date": "1997-01-03",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/BGF002/Blackrock-Global-Allocation-A2-USD",
     "proxy_ticker": "AOA",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Multi-Asset",
@@ -22,8 +32,14 @@
     "data_end_date": "2026-04-01"
   },
   {
+    "_comment": "FSMOne does not distribute the A-ACC-USD share class — only A-EUR (code FIHLTC). Per the task spec, not substituting a near-match. All FSMOne-specific fields left null until a team member confirms the intended FSMOne share class (either adopt A-EUR at FIHLTC, or accept that this fund proxy has no FSMOne counterpart).",
     "fund_code": "FSMONE_FIDELITY_HEALTH",
     "fund_name": "Fidelity Funds - Global Healthcare Fund A-ACC-USD",
+    "isin": null,
+    "fund_house": null,
+    "launch_date": null,
+    "fsmone_risk_rating": null,
+    "fsmone_url": null,
     "proxy_ticker": "XLV",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
@@ -33,8 +49,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_FRANKLIN_US_OPP",
+    "fund_code": "FTF037",
     "fund_name": "FTIF - Franklin US Opportunities A Acc USD",
+    "isin": "LU0109391861",
+    "fund_house": "Templeton Asset Management Ltd",
+    "launch_date": "2000-04-03",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/FTF037/FTIF-Franklin-US-Opportunities-A-Acc-USD",
     "proxy_ticker": "SPY",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
@@ -44,8 +65,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_JANUS_REIT",
+    "fund_code": "HEHGPE",
     "fund_name": "Janus Henderson Horizon Global Property Equities A2 USD",
+    "isin": "LU0209137388",
+    "fund_house": "Janus Henderson Investors (Singapore) Limited",
+    "launch_date": "2005-01-03",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/HEHGPE/Janus-Henderson-Horizon-Global-Property-Equities-A2-USD",
     "proxy_ticker": "VNQ",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "REIT",
@@ -55,8 +81,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_JPMORGAN_AMER_EQ",
+    "fund_code": "JPM200",
     "fund_name": "JPMorgan Funds - America Equity A (acc) USD",
+    "isin": "LU0053666078",
+    "fund_house": "JPMorgan Asset Management (Singapore) Limited",
+    "launch_date": "1988-11-16",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/JPM200/JPMorgan-Funds-America-Equity-A-acc-USD",
     "proxy_ticker": "QQQ",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
@@ -66,8 +97,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_NBG_EM_DEBT",
+    "fund_code": "NBB033",
     "fund_name": "Neuberger Berman Emerging Market Debt Blend A MDis USD",
+    "isin": "IE00BK4YYX88",
+    "fund_house": "Neuberger Berman Singapore Pte. Limited",
+    "launch_date": "2016-02-04",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/NBB033",
     "proxy_ticker": "EMB",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Fixed-Income",
@@ -77,8 +113,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_PIMCO_GLOBAL_BOND",
+    "fund_code": "ALZ155",
     "fund_name": "PIMCO Global Bond Fund Cl E Acc USD",
+    "isin": "IE00B11XZ210",
+    "fund_house": "PIMCO Asia Pte Ltd (Singapore Representative)",
+    "launch_date": "2006-03-31",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/ALZ155/PIMCO-Global-Bond-Fund-Cl-E-Acc-USD",
     "proxy_ticker": "BNDX",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Fixed-Income",
@@ -88,8 +129,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_SCHRODER_ASIA_OPP",
+    "fund_code": "SCD087",
     "fund_name": "Schroder ISF Asian Opportunities A Acc USD",
+    "isin": "LU0106259558",
+    "fund_house": "Schroder Investment Management (Singapore) Ltd",
+    "launch_date": "1993-10-29",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/SCD087/Schroder-ISF-Asian-Opportunities-A-Acc-USD",
     "proxy_ticker": "AAXJ",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Regional",
@@ -99,8 +145,13 @@
     "data_end_date": "2026-04-01"
   },
   {
-    "fund_code": "FSMONE_SCHRODER_GLOBAL_EQ",
+    "fund_code": "SCD100",
     "fund_name": "Schroder ISF Global Equity A Acc USD",
+    "isin": "LU0215105999",
+    "fund_house": "Schroder Investment Management (Singapore) Ltd",
+    "launch_date": "2005-06-03",
+    "fsmone_risk_rating": null,
+    "fsmone_url": "https://secure.fundsupermart.com/fsmone/funds/factsheet/SCD100/Schroder-ISF-Global-Equity-A-Acc-USD",
     "proxy_ticker": "VT",
     "proxy_provider": "Yahoo Finance",
     "asset_class": "Equity-Global",

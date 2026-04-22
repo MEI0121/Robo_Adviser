@@ -166,12 +166,21 @@ class TestFundCodeConsistencyAcrossEndpoints:
             "Both should be the FSMOne identifiers, in data-row order."
         )
 
-    async def test_optimize_fund_codes_start_with_fsmone_prefix(self, client):
+    async def test_optimize_fund_codes_are_short_identifiers(self, client):
+        """
+        Post-remap (real FSMOne codes via the FSMOne lookup PR), codes may
+        be short 5–12 char alphanumeric strings (e.g. ACM177, BGF002,
+        HEHGPE) or the legacy ``FSMONE_*`` synthetic placeholder for any
+        fund whose FSMOne share class could not be confirmed. Both are
+        acceptable; what matters is that codes are neither ETF tickers
+        nor empty. The ETF-ticker check is enforced separately by
+        ``test_fund_code_is_fsmone_not_etf_ticker``.
+        """
         opt_resp = await client.post(
             "/api/v1/optimize",
             json={"risk_aversion_coefficient": 3.5},
         )
         for code in opt_resp.json()["optimal_portfolio"]["fund_codes"]:
-            assert code.startswith("FSMONE_"), (
-                f"optimize response returned a non-FSMOne fund_code: {code}"
+            assert isinstance(code, str) and len(code) >= 3, (
+                f"optimize response returned a malformed fund_code: {code!r}"
             )
