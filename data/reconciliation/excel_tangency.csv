@@ -1,0 +1,60 @@
+﻿"Tangency Portfolio (long-only, max Sharpe ratio, max_weight=0.4)",
+"The tangency portfolio maximizes the Sharpe ratio (E[r] - rf)/sigma subject to the same long-only and weight-cap constraints as the Optimal sheet. Where the Optimal sheet maximizes utility for a given A, this sheet maximizes risk-adjusted return — a different objective. On a chart, this is the portfolio where the CML touches the frontier.",
+,
+Per-asset weight cap (max_weight):,0.40
+Risk-free rate (rf):,0.0300
+,
+Asset,Weight
+URTH,0.000000
+AOA,0.000000
+XLV,0.200000
+SPY,0.400000
+VNQ,0.000000
+QQQ,0.400000
+EMB,0.000000
+BNDX,0.000000
+AAXJ,0.000000
+VT,0.000000
+,
+Sum of weights:,1.000000
+Max weight:,0.400000
+,
+Portfolio statistics:,
+Expected return (annual),0.146309
+Variance (annual),0.021797
+Std dev (annual),0.147637
+Sharpe ratio (OBJECTIVE — maximize this),0.787801
+,
+,
+HOW TO RUN SOLVER,
+"1.  Open Data tab, Solver",
+2.  Set Objective:        $B$26  (Sharpe ratio cell),
+3.  To:                    Max,
+4.  By Changing Variable:  $B$8:$B$17  (the 10 weight cells),
+5.  Subject to Constraints:,
+      $B$19  =  1            (weights sum to 1),
+      $B$8:$B$17  >=  0       (long-only),
+      $B$8:$B$17  <=  $B$4    (per-asset cap),
+6.  Solving Method:        GRG Nonlinear,
+"7.  Options, Convergence: 1e-7,  Derivatives: Forward",
+8.  Click Solve. Keep Solver Solution.,
+,
+Expected result on the canonical dataset: Sharpe ~ 0.79 (matches Python tangency).,
+"If the optimum looks degenerate (single-asset concentration), tighten Convergence to 1e-9.",
+,
+,
+Reconciliation export — copy this block to data/reconciliation/excel_tangency.csv:,
+ticker,weight
+URTH,0.000000
+AOA,0.000000
+XLV,0.200000
+SPY,0.400000
+VNQ,0.000000
+QQQ,0.400000
+EMB,0.000000
+BNDX,0.000000
+AAXJ,0.000000
+VT,0.000000
+expected_return,0.146309
+volatility,0.147637
+sharpe,0.787801
