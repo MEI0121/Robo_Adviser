@@ -335,6 +335,7 @@ def test_reconciliation_json_report_schema():
         "total_checks",
         "passed_checks",
         "failed_checks",
+        "skipped_checks",
         "elapsed_seconds",
         "checks",
         "gmvp_side_by_side",
@@ -346,6 +347,6 @@ def test_reconciliation_json_report_schema():
     for check in report["checks"]:
         assert "label" in check
         assert "status" in check
-        assert check["status"] in ("PASS", "FAIL")
-        assert "max_deviation" in check
+        assert check["status"] in ("PASS", "FAIL", "SKIP")
+        assert "max_deviation" in check  # may be None for SKIP
         assert "tolerance" in check

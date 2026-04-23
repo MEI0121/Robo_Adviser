@@ -8,13 +8,15 @@ Mathematical definitions follow the PRD Appendix B notation:
   w  ∈ ℝ^n   — portfolio weights vector
   μ  ∈ ℝ^n   — annualized mean return vector
   Σ  ∈ ℝⁿˣⁿ  — annualized covariance matrix
-  r_f         — risk-free rate (default 0.03 per PRD)
+  r_f         — risk-free rate (see backend.config.RISK_FREE_RATE)
   A           — investor risk aversion coefficient ∈ [0.5, 10.0]
 """
 
 from __future__ import annotations
 
 import numpy as np
+
+from config import RISK_FREE_RATE
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +84,7 @@ def sharpe_ratio(
     w: np.ndarray,
     mu: np.ndarray,
     cov: np.ndarray,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
 ) -> float:
     """
     Compute the Sharpe Ratio.
@@ -94,7 +96,7 @@ def sharpe_ratio(
     w   : (n,) float64
     mu  : (n,) float64
     cov : (n, n) float64
-    rf  : float — risk-free rate, default 0.03 per PRD
+    rf  : float — risk-free rate, defaults to config.RISK_FREE_RATE
 
     Returns
     -------

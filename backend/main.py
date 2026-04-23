@@ -31,6 +31,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from config import RISK_FREE_RATE
 from data_loader import (
     DataLoadError,
     MatrixConditionError,
@@ -52,6 +53,7 @@ from models import (
     OptimizationMetadata,
     PortfolioStats,
     RiskProfile,
+    TangencyPortfolioStats,
 )
 from risk_chatbot.graph import sanitise_langgraph_state, step_graph
 from optimizer import (
@@ -61,7 +63,9 @@ from optimizer import (
     compute_efficient_frontier,
     compute_gmvp,
     compute_optimal_portfolio,
+    compute_tangency_portfolio,
 )
+from market_cache import get_market_artifacts_cache
 from portfolio_math import portfolio_return, portfolio_volatility, sharpe_ratio
 
 # ---------------------------------------------------------------------------
@@ -228,7 +232,7 @@ async def optimize(body: OptimizeRequest) -> OptimizeResponse:
         sharpe_ratio=sharpe_ratio(w_gmvp, mu, cov),
     )
 
-    # --- Efficient frontier -----------------------------------------------
+    # --- Efficient frontier (long-only) ----------------------------------
     try:
         frontier_points: list[FrontierPoint] = compute_efficient_frontier(
             mu, cov, n_points=100, max_weight=max_w
@@ -241,6 +245,65 @@ async def optimize(body: OptimizeRequest) -> OptimizeResponse:
                 message=str(exc),
             ).model_dump(),
         ) from exc
+
+    # --- NEW artifacts (PRD Part 1) --------------------------------------
+    # Request-dependent path: long-only tangency (depends on max_weight).
+    # The short-circuit in compute_tangency_portfolio keeps this fast even
+    # when max_weight < 1 makes the primary path infeasible.
+    try:
+        tangency_long = compute_tangency_portfolio(
+            mu, cov, max_weight=max_w, allow_short_selling=False
+        )
+    except OptimizationError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                error_code="FRONTIER_COMPUTATION_ERROR",
+                message=str(exc),
+            ).model_dump(),
+        ) from exc
+
+    # Request-independent path: GMVP short-allowed, tangency short-allowed,
+    # short-allowed frontier (100 points), equal-weight. Cached across calls
+    # — invariant in A and max_weight.
+    try:
+        cached = get_market_artifacts_cache().get(mu, cov)
+    except OptimizationError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorResponse(
+                error_code="FRONTIER_COMPUTATION_ERROR",
+                message=str(exc),
+            ).model_dump(),
+        ) from exc
+
+    w_gmvp_short = cached.gmvp_short_allowed
+    tangency_short = cached.tangency_short_allowed
+    frontier_points_short = cached.efficient_frontier_short_allowed
+    equal_weight_result = cached.equal_weight
+
+    gmvp_short_stats = PortfolioStats(
+        weights=w_gmvp_short.tolist(),
+        expected_annual_return=portfolio_return(w_gmvp_short, mu),
+        annual_volatility=portfolio_volatility(w_gmvp_short, cov),
+        sharpe_ratio=sharpe_ratio(w_gmvp_short, mu, cov),
+    )
+
+    def _tangency_to_model(r: PortfolioResult) -> TangencyPortfolioStats:
+        return TangencyPortfolioStats(
+            weights=r.weights.tolist(),
+            expected_annual_return=r.expected_return,
+            annual_volatility=r.volatility,
+            sharpe_ratio=r.sharpe,
+            solver_path=r.solver_path or None,
+        )
+
+    equal_weight_stats = PortfolioStats(
+        weights=equal_weight_result.weights.tolist(),
+        expected_annual_return=equal_weight_result.expected_return,
+        annual_volatility=equal_weight_result.volatility,
+        sharpe_ratio=equal_weight_result.sharpe,
+    )
 
     t_elapsed_ms = int((time.monotonic() - t_start) * 1000)
 
@@ -264,9 +327,22 @@ async def optimize(body: OptimizeRequest) -> OptimizeResponse:
             )
             for fp in frontier_points
         ],
+        gmvp_short_allowed=gmvp_short_stats,
+        tangency=_tangency_to_model(tangency_long),
+        tangency_short_allowed=_tangency_to_model(tangency_short),
+        efficient_frontier_short_allowed=[
+            FrontierPointModel(
+                expected_return=fp.expected_return,
+                volatility=fp.volatility,
+                sharpe_ratio=fp.sharpe_ratio,
+                weights=fp.weights.tolist(),
+            )
+            for fp in frontier_points_short
+        ],
+        equal_weight=equal_weight_stats,
         metadata=OptimizationMetadata(
             risk_aversion_coefficient=A,
-            risk_free_rate=0.03,
+            risk_free_rate=RISK_FREE_RATE,
             num_assets=10,
             data_start_date=start_date,
             data_end_date=end_date,
@@ -304,12 +380,14 @@ async def get_funds() -> FundsResponse:
         w_single[i] = 1.0
         ann_ret = float(mu[i])
         ann_vol = float(np.sqrt(cov[i, i]))
-        sr = float((ann_ret - 0.03) / ann_vol) if ann_vol > 1e-12 else 0.0
+        sr = float((ann_ret - RISK_FREE_RATE) / ann_vol) if ann_vol > 1e-12 else 0.0
 
         funds.append(
             FundInfo(
                 fund_code=meta["fund_code"],
                 fund_name=meta["fund_name"],
+                proxy_ticker=meta["proxy_ticker"],
+                proxy_provider=meta.get("proxy_provider", "Yahoo Finance"),
                 asset_class=meta["asset_class"],
                 currency=meta.get("currency", "USD"),
                 annualized_return=round(ann_ret, 6),

@@ -11,6 +11,8 @@ from typing import Literal, Optional
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from config import RISK_FREE_RATE
+
 
 # ---------------------------------------------------------------------------
 # Shared sub-models
@@ -52,6 +54,32 @@ class OptimalPortfolioStats(PortfolioStats):
     )
 
 
+class TangencyPortfolioStats(PortfolioStats):
+    """
+    Tangency (max-Sharpe) portfolio stats.
+
+    Extends PortfolioStats with ``solver_path`` to surface which branch
+    of compute_tangency_portfolio produced the result:
+      - "primary"  — the scaled min-variance QP solution renormalised
+      - "fallback" — direct Sharpe-max SLSQP
+
+    On the current dataset, non-scale-invariant bounds (e.g. [-1, 2] or
+    a long-only cap < 1) mean the fallback path is typically chosen.
+    Exposed on the API so the reconciliation harness and methodology
+    report can audit which branch was taken per regime.
+
+    ``utility_score`` is not meaningful for a tangency portfolio (it is
+    defined against a risk-aversion coefficient A, and the tangency is
+    independent of any specific investor) — it is omitted from this model.
+    """
+
+    solver_path: Optional[str] = Field(
+        default=None,
+        description='"primary" or "fallback"; identifies which branch of '
+        "compute_tangency_portfolio produced this result.",
+    )
+
+
 class FrontierPoint(BaseModel):
     """A single point on the efficient frontier."""
 
@@ -65,7 +93,7 @@ class OptimizationMetadata(BaseModel):
     """Metadata attached to every optimization response."""
 
     risk_aversion_coefficient: float
-    risk_free_rate: float = 0.03
+    risk_free_rate: float = RISK_FREE_RATE
     num_assets: int = 10
     data_start_date: str
     data_end_date: str
@@ -114,10 +142,55 @@ class OptimizeResponse(BaseModel):
     gmvp: PortfolioStats
     efficient_frontier: list[FrontierPoint] = Field(
         ...,
-        min_length=100,
-        max_length=100,
-        description="100 frontier points sorted by volatility ascending.",
+        min_length=50,
+        max_length=200,
+        description=(
+            "Long-only efficient frontier. Currently 100 points sorted by "
+            "volatility ascending. Bounds are relaxed to [50, 200] to allow "
+            "future adjustments without an API contract change; the server "
+            "currently always emits 100."
+        ),
     )
+
+    # ----- New artifacts (PRD Part 1: short-sale + tangency + equal-weight) --
+    gmvp_short_allowed: PortfolioStats = Field(
+        ...,
+        description=(
+            "GMVP computed under relaxed constraints w_i in [-1, 2]. Same "
+            "shape as `gmvp`; shorts are expected on the current dataset."
+        ),
+    )
+    tangency: TangencyPortfolioStats = Field(
+        ...,
+        description=(
+            "Max-Sharpe portfolio under the request's max_single_weight "
+            "cap, long-only. Anchor point for the Capital Market Line."
+        ),
+    )
+    tangency_short_allowed: TangencyPortfolioStats = Field(
+        ...,
+        description=(
+            "Max-Sharpe portfolio under relaxed constraints w_i in [-1, 2]."
+        ),
+    )
+    efficient_frontier_short_allowed: list[FrontierPoint] = Field(
+        ...,
+        min_length=50,
+        max_length=200,
+        description=(
+            "Parallel 100-point efficient frontier with w_i in [-1, 2]. "
+            "Same point count as `efficient_frontier` so the two curves "
+            "can be compared directly in the σ-E(r) plane."
+        ),
+    )
+    equal_weight: PortfolioStats = Field(
+        ...,
+        description=(
+            "Naive 1/n benchmark. Computed server-side (replaces the "
+            "frontend's previous incorrect average-of-frontier-points)."
+        ),
+    )
+
     metadata: OptimizationMetadata
 
 
@@ -127,10 +200,27 @@ class OptimizeResponse(BaseModel):
 
 
 class FundInfo(BaseModel):
-    """Metadata for a single fund in the universe."""
+    """
+    Metadata for a single fund in the universe.
+
+    ``fund_code`` and ``fund_name`` are the **display layer** — the FSMOne
+    fund identifiers that users see and transact in. Expected returns and
+    covariance, however, are estimated from a liquid ETF ``proxy_ticker``
+    priced via ``proxy_provider``, because FSMOne does not expose 10-year
+    daily historical data via API. The split is documented to users via a
+    methodology tooltip on the fund-listing pages.
+    """
 
     fund_code: str
     fund_name: str
+    proxy_ticker: str = Field(
+        ...,
+        description="ETF ticker used to estimate mu and sigma for this fund.",
+    )
+    proxy_provider: str = Field(
+        default="Yahoo Finance",
+        description="Upstream price-series provider for the proxy ticker.",
+    )
     asset_class: Literal[
         "Equity-Global",
         "Equity-Regional",

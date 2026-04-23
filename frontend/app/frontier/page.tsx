@@ -166,8 +166,13 @@ export default function FrontierPage() {
             ) : result ? (
               <EfficientFrontierChart
                 frontier={result.efficient_frontier}
+                frontierShortAllowed={result.efficient_frontier_short_allowed}
                 gmvp={result.gmvp}
+                gmvpShortAllowed={result.gmvp_short_allowed}
+                tangency={result.tangency}
+                tangencyShortAllowed={result.tangency_short_allowed}
                 optimal={result.optimal_portfolio}
+                equalWeight={result.equal_weight}
                 funds={funds}
                 riskFreeRate={result.metadata.risk_free_rate}
                 chartRevision={

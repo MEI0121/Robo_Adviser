@@ -1,13 +1,35 @@
 {
-  "timestamp": "2026-04-20T21:53:36.463837Z",
-  "git_commit_sha": "N/A",
-  "excel_file_version": "N/A (no Excel CSVs found)",
-  "overall_status": "PASS",
-  "total_checks": 18,
-  "passed_checks": 18,
-  "failed_checks": 0,
-  "elapsed_seconds": 0.053,
+  "timestamp": "2026-04-22T14:00:22.831701Z",
+  "git_commit_sha": "f81c7d4",
+  "excel_file_version": "2026-04-22 21:40:56",
+  "overall_status": "FAIL",
+  "total_checks": 32,
+  "passed_checks": 28,
+  "failed_checks": 3,
+  "skipped_checks": 1,
+  "elapsed_seconds": 3.53,
   "checks": [
+    {
+      "label": "μ vector (10 elements)",
+      "status": "PASS",
+      "max_deviation": 4.215342658264731e-09,
+      "tolerance": 1e-06,
+      "details": "max_dev=4.215343e-09, tol=1e-06, worst_idx=7"
+    },
+    {
+      "label": "Σ matrix (100 elements)",
+      "status": "PASS",
+      "max_deviation": 4.754361597556628e-09,
+      "tolerance": 1e-06,
+      "details": "max_dev=4.754362e-09, tol=1e-06, worst_idx=57"
+    },
+    {
+      "label": "GMVP weights (10 elements)",
+      "status": "FAIL",
+      "max_deviation": 0.3558353105801102,
+      "tolerance": 1e-06,
+      "details": "max_dev=3.558353e-01, tol=1e-06, worst_idx=3"
+    },
     {
       "label": "GMVP E(r_p)",
       "status": "PASS",
@@ -28,6 +50,13 @@
       "max_deviation": 0.0,
       "tolerance": 0.0001,
       "details": ""
+    },
+    {
+      "label": "Optimal weights (A=0.5)",
+      "status": "PASS",
+      "max_deviation": 6.938893903907228e-16,
+      "tolerance": 1e-06,
+      "details": "max_dev=6.938894e-16, tol=1e-06, worst_idx=0"
     },
     {
       "label": "Optimal A=0.5 E(r_p)",
@@ -51,6 +80,13 @@
       "details": ""
     },
     {
+      "label": "Optimal weights (A=2.0)",
+      "status": "PASS",
+      "max_deviation": 5.967448757360216e-16,
+      "tolerance": 1e-06,
+      "details": "max_dev=5.967449e-16, tol=1e-06, worst_idx=0"
+    },
+    {
       "label": "Optimal A=2.0 E(r_p)",
       "status": "PASS",
       "max_deviation": 0.0,
@@ -70,6 +106,13 @@
       "max_deviation": 0.0,
       "tolerance": 0.0001,
       "details": ""
+    },
+    {
+      "label": "Optimal weights (A=3.5)",
+      "status": "PASS",
+      "max_deviation": 1.3877787807814457e-16,
+      "tolerance": 1e-06,
+      "details": "max_dev=1.387779e-16, tol=1e-06, worst_idx=0"
     },
     {
       "label": "Optimal A=3.5 E(r_p)",
@@ -93,6 +136,13 @@
       "details": ""
     },
     {
+      "label": "Optimal weights (A=6.0)",
+      "status": "PASS",
+      "max_deviation": 8.441939420206213e-05,
+      "tolerance": 0.0001,
+      "details": "max_dev=8.441939e-05, tol=1e-04, worst_idx=2"
+    },
+    {
       "label": "Optimal A=6.0 E(r_p)",
       "status": "PASS",
       "max_deviation": 0.0,
@@ -114,6 +164,13 @@
       "details": ""
     },
     {
+      "label": "Optimal weights (A=10.0)",
+      "status": "PASS",
+      "max_deviation": 2.2347642102474308e-07,
+      "tolerance": 1e-06,
+      "details": "max_dev=2.234764e-07, tol=1e-06, worst_idx=3"
+    },
+    {
       "label": "Optimal A=10.0 E(r_p)",
       "status": "PASS",
       "max_deviation": 0.0,
@@ -133,6 +190,50 @@
       "max_deviation": 0.0,
       "tolerance": 0.0001,
       "details": ""
+    },
+    {
+      "label": "Frontier weights (100 points)",
+      "status": "FAIL",
+      "max_deviation": 0.34997440468622626,
+      "tolerance": 1e-05,
+      "details": "Worst frontier point index: 68"
+    },
+    {
+      "label": "GMVP (short-allowed) weights",
+      "status": "PASS",
+      "max_deviation": 6.565492117555083e-06,
+      "tolerance": 1e-05,
+      "details": "max_dev=6.565492e-06, tol=1e-05, worst_idx=1"
+    },
+    {
+      "label": "Tangency (long-only) weights",
+      "status": "PASS",
+      "max_deviation": 7.216449660063518e-16,
+      "tolerance": 1e-06,
+      "details": "max_dev=7.216450e-16, tol=1e-06, worst_idx=2",
+      "solver_path": "fallback"
+    },
+    {
+      "label": "Tangency (short-allowed) weights",
+      "status": "SKIP",
+      "max_deviation": null,
+      "tolerance": 1e-06,
+      "details": "no Excel reference",
+      "solver_path": "fallback"
+    },
+    {
+      "label": "Frontier weights (short-allowed, 100 points)",
+      "status": "FAIL",
+      "max_deviation": 0.02459981199668837,
+      "tolerance": 1e-05,
+      "details": "Worst frontier point index: 32"
+    },
+    {
+      "label": "Equal-weight (E[r], σ, Sharpe)",
+      "status": "PASS",
+      "max_deviation": 3.805282755564576e-09,
+      "tolerance": 1e-06,
+      "details": "max_dev=3.805283e-09, tol=1e-06, worst_idx=2"
     }
   ],
   "gmvp_side_by_side": [
@@ -188,11 +289,11 @@
     },
     {
       "asset_index": 2,
-      "python_weight": 0.0
+      "python_weight": 0.2
     },
     {
       "asset_index": 3,
-      "python_weight": 0.0
+      "python_weight": 0.4
     },
     {
       "asset_index": 4,
@@ -200,7 +301,7 @@
     },
     {
       "asset_index": 5,
-      "python_weight": 1.0
+      "python_weight": 0.4
     },
     {
       "asset_index": 6,

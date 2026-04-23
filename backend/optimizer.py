@@ -1,25 +1,38 @@
 """
 Portfolio optimization module.
 
-Implements three algorithms that mirror the Excel audit model:
+Implements the algorithms that mirror the Excel audit model:
 
 1. compute_gmvp()           — Closed-form Global Minimum Variance Portfolio
                                (mirrors Excel MMULT / MINVERSE formula)
 2. minimize_variance_for_target() — Minimum variance at a target return level
                                     (SLSQP inner loop for frontier sweep)
 3. compute_efficient_frontier()   — 100-point parametric frontier sweep
-4. compute_optimal_portfolio()    — Utility-maximizing portfolio via SLSQP
+4. compute_optimal_portfolio()    — Utility-maximising portfolio via SLSQP
+4b. compute_tangency_portfolio()  — Max-Sharpe portfolio (scaled min-var
+                                     with direct Sharpe-max fallback)
+5. compute_equal_weight_portfolio() — 1/n benchmark statistics
 
 Reconciliation target: all results must agree with Excel to within 1e-6.
+
+Short-sale regime: every SLSQP-based optimiser accepts an
+``allow_short_selling`` flag. When False (default), bounds are
+[0, max_weight] (long-only). When True, bounds are fixed to [-1, 2] per
+PRD Part 1; truly unconstrained was ruled out because the closed-form
+tangency on this dataset is numerically degenerate (see docs §4).
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import minimize, OptimizeResult
 
+from config import RISK_FREE_RATE
+
+_logger = logging.getLogger(__name__)
 from portfolio_math import (
     portfolio_return,
     portfolio_variance,
@@ -27,6 +40,26 @@ from portfolio_math import (
     sharpe_ratio,
     utility,
 )
+
+
+# ---------------------------------------------------------------------------
+# Short-sale bounds (PRD Part 1)
+# ---------------------------------------------------------------------------
+
+# When allow_short_selling=True, each weight is bounded by this interval.
+# The dataset-specific rationale (unconstrained tangency is degenerate here)
+# is recorded in docs/academic_report_robo_adviser.md §4.
+SHORT_SALE_LOWER_BOUND: float = -1.0
+SHORT_SALE_UPPER_BOUND: float = 2.0
+
+
+def _bounds_for_regime(
+    n: int, max_weight: float, allow_short_selling: bool
+) -> list[tuple[float, float]]:
+    """Per-asset bounds passed to SLSQP, switched by regime."""
+    if allow_short_selling:
+        return [(SHORT_SALE_LOWER_BOUND, SHORT_SALE_UPPER_BOUND)] * n
+    return [(0.0, max_weight)] * n
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +85,7 @@ class PortfolioResult:
     volatility: float
     sharpe: float
     utility_score: float = 0.0   # filled in for the optimal portfolio only
+    solver_path: str = ""        # e.g. "primary" or "fallback" for tangency
 
 
 @dataclass
@@ -123,18 +157,67 @@ def compute_gmvp(cov: np.ndarray) -> np.ndarray:
     return w_gmvp.astype(np.float64)
 
 
-def _compute_constrained_gmvp(cov: np.ndarray) -> np.ndarray:
+def _compute_constrained_gmvp(
+    cov: np.ndarray,
+    allow_short_selling: bool = False,
+) -> np.ndarray:
     """
-    Compute GMVP subject to long-only constraints using SLSQP.
+    Compute GMVP subject to per-asset bounds.
 
-    Used as a fallback when the unconstrained closed-form GMVP produces
-    negative weights (which occurs when short-selling would reduce risk).
+    Used in two roles:
+      - As a fallback from compute_gmvp() when the closed-form produces
+        negative weights (long-only regime, bounds [0, 1]). Solved via
+        SLSQP because the closed-form is infeasible under w_i ≥ 0.
+      - As the direct GMVP solver when short-sales are allowed under the
+        PRD Part 1 bounds [-1, 2]. Closed-form fast path: whenever the
+        unconstrained closed-form w* = Σ⁻¹·1 / (1ᵀΣ⁻¹·1) lies inside
+        [-1, 2] element-wise (verified at 1e-6 tolerance), it IS the
+        constrained optimum and is returned exactly. This eliminates
+        ~1e-5 SLSQP convergence drift that was causing the
+        reconciliation's GMVP (short-allowed) check to FAIL against
+        Excel's exact closed-form. If bounds ever do bind on different
+        data, the assertion fires — fail loudly rather than silently
+        return an out-of-bounds result.
+
+    Parameters
+    ----------
+    cov                 : (n, n) float64 annualized covariance matrix
+    allow_short_selling : bool — if True, bounds = [-1, 2] instead of [0, 1]
     """
     n = cov.shape[0]
+
+    if allow_short_selling:
+        # Closed-form fast path under the short-allowed regime.
+        ones = np.ones(n, dtype=np.float64)
+        cov_inv = np.linalg.inv(cov)
+        numerator = cov_inv @ ones
+        denominator = float(ones @ numerator)
+        if abs(denominator) < 1e-14:
+            raise OptimizationError(
+                "Short-allowed GMVP denominator 1ᵀΣ⁻¹1 is effectively zero; "
+                "covariance matrix may be singular."
+            )
+        w_closed = (numerator / denominator).astype(np.float64)
+
+        # Bounds non-binding verification (1e-6 tolerance). If this ever
+        # fires on different data, add an SLSQP fallback branch here.
+        assert (
+            w_closed.min() >= SHORT_SALE_LOWER_BOUND - 1e-6
+            and w_closed.max() <= SHORT_SALE_UPPER_BOUND + 1e-6
+        ), (
+            f"Short-allowed GMVP closed-form violates [-1, 2] bounds: "
+            f"min={w_closed.min():.6f}, max={w_closed.max():.6f}. "
+            "Bounds are no longer non-binding on this data — add an "
+            "SLSQP fallback branch to _compute_constrained_gmvp."
+        )
+        return w_closed
+
+    # Long-only regime: closed-form typically has negatives on equity-heavy
+    # universes; SLSQP with [0, 1] bounds is required.
     x0 = np.ones(n, dtype=np.float64) / n
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, 1.0)] * n
+    bounds = _bounds_for_regime(n, max_weight=1.0, allow_short_selling=False)
 
     result: OptimizeResult = minimize(
         fun=lambda w: portfolio_variance(w, cov),
@@ -163,19 +246,22 @@ def minimize_variance_for_target(
     cov: np.ndarray,
     target_return: float,
     max_weight: float = 1.0,
+    allow_short_selling: bool = False,
 ) -> np.ndarray:
     """
     Find the portfolio with minimum variance subject to:
       - sum(w) = 1
-      - w_i >= 0   (long-only)
       - w^T μ = target_return
+      - per-asset bounds from _bounds_for_regime(...)
+        (long-only [0, max_weight] or short-allowed [-1, 2])
 
     Parameters
     ----------
-    mu            : (n,) float64
-    cov           : (n, n) float64
-    target_return : float — desired portfolio expected return
-    max_weight    : float — per-asset upper bound (default 1.0 = unconstrained)
+    mu                  : (n,) float64
+    cov                 : (n, n) float64
+    target_return       : float — desired portfolio expected return
+    max_weight          : float — per-asset upper bound (long-only regime only)
+    allow_short_selling : bool — if True, bounds = [-1, 2]
 
     Returns
     -------
@@ -192,7 +278,7 @@ def minimize_variance_for_target(
         {"type": "eq", "fun": lambda w: np.sum(w) - 1.0},
         {"type": "eq", "fun": lambda w: portfolio_return(w, mu) - target_return},
     ]
-    bounds = [(0.0, max_weight)] * n
+    bounds = _bounds_for_regime(n, max_weight, allow_short_selling)
 
     result: OptimizeResult = minimize(
         fun=lambda w: portfolio_variance(w, cov),
@@ -224,12 +310,13 @@ def compute_efficient_frontier(
     mu: np.ndarray,
     cov: np.ndarray,
     n_points: int = 100,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
     max_weight: float = 1.0,
+    allow_short_selling: bool = False,
 ) -> list[FrontierPoint]:
     """
     Trace the efficient frontier by sweeping target returns from the GMVP
-    expected return up to the maximum individual asset return.
+    expected return up to the feasible-set maximum.
 
     Returns exactly n_points FrontierPoint objects sorted by volatility
     ascending (i.e. the frontier is traced from bottom-left to top-right
@@ -237,28 +324,41 @@ def compute_efficient_frontier(
 
     Parameters
     ----------
-    mu       : (n,) float64
-    cov      : (n, n) float64
-    n_points : int — default 100 per PRD
-    rf       : float — risk-free rate for Sharpe computation
-    max_weight : float — per-asset cap forwarded to inner optimiser
+    mu                  : (n,) float64
+    cov                 : (n, n) float64
+    n_points            : int — default 100 per PRD
+    rf                  : float — risk-free rate for Sharpe computation
+    max_weight          : float — per-asset cap (long-only regime only)
+    allow_short_selling : bool — if True, inner bounds are [-1, 2] and the
+                                  target-return sweep is extended to the
+                                  analytical upper bound for that regime
 
     Returns
     -------
     list[FrontierPoint] of length n_points, sorted by volatility ascending
     """
-    # Establish the feasible return range
-    w_gmvp = compute_gmvp(cov)
-    mu_min = portfolio_return(w_gmvp, mu)   # GMVP return = frontier minimum
-    mu_max = float(mu.max())                # single-asset maximum
+    # Establish the feasible return range for this regime
+    if allow_short_selling:
+        # GMVP under [-1, 2] gives the lower return endpoint.
+        w_gmvp = _compute_constrained_gmvp(cov, allow_short_selling=True)
+        # Upper endpoint under bounds w_i ∈ [-1, 2] with sum(w) = 1:
+        # put +2 on the highest-mu asset, -1 on the lowest-mu asset,
+        # 0 elsewhere (sum = 1, feasible, analytical argmax of mu^T w).
+        mu_max = 2.0 * float(mu.max()) - 1.0 * float(mu.min())
+    else:
+        w_gmvp = compute_gmvp(cov)
+        mu_max = float(mu.max())                   # single-asset maximum
 
-    # Expand the range slightly to avoid numerical issues at boundaries
+    mu_min = portfolio_return(w_gmvp, mu)          # GMVP return = frontier minimum
+
     target_returns = np.linspace(mu_min, mu_max, n_points)
 
     frontier: list[FrontierPoint] = []
     for target in target_returns:
         try:
-            w = minimize_variance_for_target(mu, cov, target, max_weight)
+            w = minimize_variance_for_target(
+                mu, cov, target, max_weight, allow_short_selling
+            )
         except OptimizationError:
             # Skip infeasible points (can occur at the far right of the frontier)
             continue
@@ -305,7 +405,8 @@ def compute_optimal_portfolio(
     cov: np.ndarray,
     A: float,
     max_weight: float = 1.0,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
+    allow_short_selling: bool = False,
 ) -> PortfolioResult:
     """
     Find the portfolio that maximises the mean-variance utility function:
@@ -313,19 +414,20 @@ def compute_optimal_portfolio(
         U(w) = E(r_p) − ½ · A · σ_p²
 
     subject to:
-        Σ w_i = 1          (full investment)
-        w_i ≥ 0            (long-only)
-        w_i ≤ max_weight   (optional concentration cap)
+        Σ w_i = 1                             (full investment)
+        long-only:  0 ≤ w_i ≤ max_weight     (default)
+        short-allowed:  −1 ≤ w_i ≤ 2          (when allow_short_selling=True)
 
     SLSQP solver with ftol=1e-9 to exceed the 1e-6 reconciliation threshold.
 
     Parameters
     ----------
-    mu         : (n,) float64
-    cov        : (n, n) float64
-    A          : float — risk aversion coefficient ∈ [0.5, 10.0]
-    max_weight : float — per-asset upper bound (1.0 = no cap)
-    rf         : float — risk-free rate for Sharpe computation
+    mu                  : (n,) float64
+    cov                 : (n, n) float64
+    A                   : float — risk aversion coefficient ∈ [0.5, 10.0]
+    max_weight          : float — per-asset upper bound (long-only regime only)
+    rf                  : float — risk-free rate for Sharpe computation
+    allow_short_selling : bool — if True, bounds switch to [-1, 2]
 
     Returns
     -------
@@ -345,7 +447,7 @@ def compute_optimal_portfolio(
     x0 = np.ones(n, dtype=np.float64) / n  # equal-weight initialisation
 
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
-    bounds = [(0.0, max_weight)] * n
+    bounds = _bounds_for_regime(n, max_weight, allow_short_selling)
 
     def negative_utility(w: np.ndarray) -> float:
         """Objective to minimise = −U(w)."""
@@ -377,6 +479,213 @@ def compute_optimal_portfolio(
 
 
 # ---------------------------------------------------------------------------
+# 4b. Tangency (max-Sharpe) portfolio
+# ---------------------------------------------------------------------------
+
+
+def _bounds_respected(w: np.ndarray, bounds: list[tuple[float, float]], tol: float = 1e-8) -> bool:
+    """Verify every weight lies within its (lo, hi) bound, up to tolerance."""
+    return all(lo - tol <= wi <= hi + tol for wi, (lo, hi) in zip(w, bounds))
+
+
+def _max_excess_under_box(
+    excess: np.ndarray, bounds: list[tuple[float, float]]
+) -> float:
+    """
+    Closed-form ``max_{w ∈ box} (μ - rf·1)ᵀ w`` with no sum constraint.
+
+    Our primary tangency QP drops ``sum(w) = 1`` (Sharpe is scale-invariant;
+    the renormalisation after solve handles it). Under a box alone,
+    the LP is coordinate-separable: push each ``w_i`` to its sign-favouring
+    bound.
+
+    Used as a constant-time feasibility check: if this maximum is below 1,
+    the linear equality ``(μ - rf·1)ᵀ w = 1`` cannot be satisfied inside the
+    box and SLSQP is guaranteed to fail. Skipping the doomed call saves
+    ~800 ms per tangency on the current dataset.
+    """
+    total = 0.0
+    for e, (lo, hi) in zip(excess, bounds):
+        total += hi * float(e) if e > 0.0 else lo * float(e)
+    return total
+
+
+def compute_tangency_portfolio(
+    mu: np.ndarray,
+    cov: np.ndarray,
+    rf: float = RISK_FREE_RATE,
+    max_weight: float = 1.0,
+    allow_short_selling: bool = False,
+) -> PortfolioResult:
+    """
+    Max-Sharpe (tangency) portfolio under the specified bounds regime.
+
+    Stability
+    ---------
+    Direct maximisation of S(w) = (μᵀw − rf) / √(wᵀΣw) is numerically
+    unstable: the objective is unbounded as wᵀΣw → 0 and SLSQP can
+    chase the degeneracy, especially with allow_short_selling=True.
+
+    Primary path — scaled min-variance (classical stable trick):
+        min  wᵀΣw
+        s.t. (μ − rf·1)ᵀw = 1
+             per-asset bounds from regime
+    (the sum-to-one constraint is intentionally dropped here — Sharpe
+    is scale-invariant, so fixing the excess return to 1 picks a scale
+    that is normalised away in step 2)
+
+        2. Renormalise: w_tan = w / sum(w).
+        3. Validate post-normalisation weights against the original
+           bounds.
+
+    Fallback path — direct Sharpe-max SLSQP:
+        max  (μᵀw − rf) / √(wᵀΣw)     (actually min of −Sharpe)
+        s.t. sum(w) = 1
+             per-asset bounds from regime
+
+        Warm-started from the primary's output when valid, else from
+        equal weights (long-only) or the long-only tangency
+        (short-allowed).
+
+    Why run both
+    ------------
+    The scaled min-variance formulation is exactly correct only when
+    bounds scale with w (e.g. w_i ≥ 0, no upper cap). When bounds are
+    [0, max_weight<1] or [-1, 2] they don't scale, so the
+    renormalised primary solution can respect the bounds yet land on a
+    non-tangent point. We therefore always run both paths and return
+    whichever has the higher Sharpe ratio. ``solver_path`` records
+    which path won (primary / fallback).
+
+    Parameters
+    ----------
+    mu                  : (n,) float64 — annualised expected returns
+    cov                 : (n, n) float64 — annualised covariance
+    rf                  : float — risk-free rate
+    max_weight          : float — per-asset cap (long-only regime only)
+    allow_short_selling : bool — if True, bounds become [-1, 2]
+
+    Returns
+    -------
+    PortfolioResult with ``solver_path ∈ {"primary", "fallback"}``.
+
+    Raises
+    ------
+    OptimizationError  if both paths fail.
+    """
+    n = len(mu)
+    excess = np.asarray(mu, dtype=np.float64) - float(rf)
+    bounds = _bounds_for_regime(n, max_weight, allow_short_selling)
+
+    def _finalise(w_unit: np.ndarray, path: str) -> PortfolioResult:
+        return PortfolioResult(
+            weights=w_unit,
+            expected_return=portfolio_return(w_unit, mu),
+            volatility=portfolio_volatility(w_unit, cov),
+            sharpe=sharpe_ratio(w_unit, mu, cov, rf),
+            solver_path=path,
+        )
+
+    # -----------------------------------------------------------------
+    # Primary: min wᵀΣw  s.t.  (μ-rf·1)ᵀw = 1, bounds
+    # -----------------------------------------------------------------
+    # x0 initialisation: scale equal-weight up so the linear constraint
+    # is closer to satisfied. ((μ-rf)ᵀ(1/n · 1) · k = 1) ⇒ k = 1/((μ-rf).mean())
+    mean_excess = float(excess.mean())
+    if abs(mean_excess) > 1e-12:
+        x0_primary = np.ones(n, dtype=np.float64) * (1.0 / mean_excess / n)
+    else:
+        x0_primary = np.ones(n, dtype=np.float64) / n
+
+    primary_constraints = [{"type": "eq", "fun": lambda w, e=excess: float(e @ w - 1.0)}]
+
+    primary_candidate: PortfolioResult | None = None
+
+    # Constant-time feasibility pre-check. SLSQP with `(μ-rf·1)ᵀw = 1` inside
+    # a box `w ∈ bounds` (no sum constraint here — see docstring) is feasible
+    # iff the box itself admits some w with excess ≥ 1. If it doesn't, SLSQP
+    # runs to maxiter failing — ~800 ms of waste per call on the current
+    # dataset. Skip straight to fallback in that case.
+    max_achievable_excess = _max_excess_under_box(excess, bounds)
+    primary_is_feasible = max_achievable_excess >= 1.0 - 1e-12
+
+    if not primary_is_feasible:
+        _logger.debug(
+            "Tangency primary infeasible under bounds=%s: "
+            "max achievable (μ-rf)ᵀw = %.6f < 1.0; using fallback",
+            bounds, max_achievable_excess,
+        )
+    else:
+        try:
+            primary = minimize(
+                fun=lambda w, c=cov: float(w @ c @ w),
+                x0=x0_primary,
+                method="SLSQP",
+                bounds=bounds,
+                constraints=primary_constraints,
+                options={"ftol": 1e-12, "maxiter": 2000},
+            )
+        except Exception:  # noqa: BLE001 — any SLSQP internal error falls through
+            primary = None
+
+        if primary is not None and primary.success:
+            w_raw = primary.x.astype(np.float64)
+            s = float(w_raw.sum())
+            if s > 1e-9:
+                w_tan = w_raw / s
+                if _bounds_respected(w_tan, bounds):
+                    primary_candidate = _finalise(w_tan, "primary")
+
+    # -----------------------------------------------------------------
+    # Fallback: direct Sharpe-max SLSQP (always run — see docstring)
+    # -----------------------------------------------------------------
+    if primary_candidate is not None:
+        x0_fallback = primary_candidate.weights.copy()
+    elif allow_short_selling:
+        # Warm-start from long-only tangency when available
+        try:
+            long_only_tan = compute_tangency_portfolio(
+                mu, cov, rf=rf, max_weight=1.0, allow_short_selling=False
+            )
+            x0_fallback = long_only_tan.weights.copy()
+        except OptimizationError:
+            x0_fallback = np.ones(n, dtype=np.float64) / n
+    else:
+        x0_fallback = np.ones(n, dtype=np.float64) / n
+
+    def _neg_sharpe(w: np.ndarray, e: np.ndarray = excess, c: np.ndarray = cov) -> float:
+        variance = float(w @ c @ w)
+        if variance <= 1e-16:
+            return 0.0  # degenerate; let SLSQP move on
+        return -float(e @ w) / float(np.sqrt(variance))
+
+    fallback_constraints = [{"type": "eq", "fun": lambda w: float(np.sum(w) - 1.0)}]
+    fallback = minimize(
+        fun=_neg_sharpe,
+        x0=x0_fallback,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=fallback_constraints,
+        options={"ftol": 1e-9, "maxiter": 2000},
+    )
+
+    fallback_candidate: PortfolioResult | None = None
+    if fallback.success:
+        fallback_candidate = _finalise(fallback.x.astype(np.float64), "fallback")
+
+    # -----------------------------------------------------------------
+    # Return the higher-Sharpe of the two. If both failed, raise.
+    # -----------------------------------------------------------------
+    candidates = [c for c in (primary_candidate, fallback_candidate) if c is not None]
+    if not candidates:
+        raise OptimizationError(
+            "Tangency optimisation failed in both primary and fallback paths. "
+            f"Fallback message: {fallback.message}"
+        )
+    return max(candidates, key=lambda c: c.sharpe)
+
+
+# ---------------------------------------------------------------------------
 # 5. Equal-weight portfolio stats (reference benchmark)
 # ---------------------------------------------------------------------------
 
@@ -384,7 +693,7 @@ def compute_optimal_portfolio(
 def compute_equal_weight_portfolio(
     mu: np.ndarray,
     cov: np.ndarray,
-    rf: float = 0.03,
+    rf: float = RISK_FREE_RATE,
 ) -> PortfolioResult:
     """
     Compute statistics for the naive equal-weight (1/n) portfolio.
